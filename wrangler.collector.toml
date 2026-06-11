@@ -1,0 +1,6 @@
+name = "spcxx-usdc-monitor-collector"
+main = "workers/collector.js"
+compatibility_date = "2026-06-11"
+
+[triggers]
+crons = ["* * * * *"]

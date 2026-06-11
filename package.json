@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "node scripts/build-check.mjs",
+    "backfill:supabase": "node scripts/backfill-supabase-history.mjs",
     "dev": "wrangler pages dev public --compatibility-date=2026-06-11",
     "deploy": "wrangler pages deploy public --project-name=spcxx-usdc-monitor"
   },

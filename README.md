@@ -83,4 +83,18 @@ The API persists a row only when called with:
 /api/metrics?persist=1
 ```
 
-The included `.github/workflows/collect.yml` calls that URL every five minutes, so Supabase keeps collecting samples even when nobody has the page open.
+The included Cloudflare Worker collector calls that URL every minute, so Supabase keeps collecting samples even when nobody has the page open. `.github/workflows/collect.yml` remains as a backup collector.
+
+To backfill the full campaign history into Supabase, run:
+
+```bash
+npm run backfill:supabase
+```
+
+The backfill script reconstructs the activity from BSC USDC `Transfer` logs, converts it into minute-level samples, and upserts those samples by `sample_bucket`.
+
+The collector worker is deployed from `wrangler.collector.toml` and runs this cron:
+
+```text
+* * * * *
+```
