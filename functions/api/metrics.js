@@ -13,6 +13,21 @@ const NAME_SELECTOR = "0x06fdde03";
 const PAUSED_SELECTOR = "0x5c975abb";
 const EIP_1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const DEFAULT_SUPABASE_TABLE = "spcxx_usdc_metrics";
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+const DEFAULT_LOG_RPC_URLS = [
+  "https://bsc.publicnode.com",
+  "https://bsc-rpc.publicnode.com",
+  "https://bsc-dataseed1.binance.org",
+  "https://bsc-dataseed.binance.org"
+];
+const DEFAULT_CAMPAIGN_START_BLOCK = 103507500;
+const DEFAULT_LOG_BLOCK_RANGE = 10000;
+const DEFAULT_LOG_RANGE_BATCH_SIZE = 6;
+const DEFAULT_HISTORY_POINT_LIMIT = 220;
+const DEFAULT_TREND_CACHE_SECONDS = 60;
+const DEFAULT_TREND_REFRESH_BLOCKS = 240;
+
+let transferTrendCache;
 
 export async function onRequestGet(context) {
   const url = new URL(context.request.url);
@@ -60,6 +75,7 @@ async function readMetrics(env, options = {}) {
   const campaignContract = env.CAMPAIGN_CONTRACT || CAMPAIGN_CONTRACT;
   const usdcContract = env.USDC_CONTRACT || USDC_CONTRACT;
   const rpcUrls = parseRpcUrls(env.BSC_RPC_URLS);
+  const logRpcUrls = parseRpcUrls(env.BSC_LOG_RPC_URLS || env.BSC_RPC_URLS, DEFAULT_LOG_RPC_URLS);
   const accountData = padAddress(campaignContract);
 
   const balanceCall = ethCall(1, usdcContract, BALANCE_OF_SELECTOR + accountData);
@@ -129,23 +145,61 @@ async function readMetrics(env, options = {}) {
       stored: false
     },
     history: [],
+    historyMeta: {
+      source: "bsc_usdc_transfer_logs",
+      fromBlock: readPositiveInteger(env.CAMPAIGN_START_BLOCK, DEFAULT_CAMPAIGN_START_BLOCK),
+      toBlock: blockNumber,
+      pointLimit: readPositiveInteger(env.HISTORY_POINT_LIMIT, DEFAULT_HISTORY_POINT_LIMIT)
+    },
     checkedAt
   };
 
+  try {
+    const trend = await readTransferTrend(env, {
+      campaignContract,
+      usdcContract,
+      decimals,
+      currentBlock: blockNumber,
+      currentBalanceRaw: balanceRaw,
+      checkedAt,
+      rpcUrls: logRpcUrls
+    });
+    metrics.history = trend.history;
+    metrics.historyMeta = {
+      ...metrics.historyMeta,
+      ...trend.meta
+    };
+  } catch (error) {
+    metrics.history = [
+      {
+        checkedAt,
+        blockNumber,
+        stakedUsdc: balance,
+        balanceRaw: balanceRaw.toString()
+      }
+    ];
+    metrics.historyMeta = {
+      ...metrics.historyMeta,
+      source: "current_balance_fallback",
+      error: error instanceof Error ? error.message : "Unknown transfer log error"
+    };
+  }
+
   if (isSupabaseConfigured(env)) {
     const shouldPersist = options.persist || env.PERSIST_ON_READ === "true";
-    const stored = shouldPersist ? await storeSupabaseMetric(env, metrics) : false;
-    const history = await readSupabaseHistory(env);
-    metrics.storage.stored = stored;
-    metrics.history = history;
+    try {
+      metrics.storage.stored = shouldPersist ? await storeSupabaseMetric(env, metrics) : false;
+    } catch (error) {
+      metrics.storage.error = error instanceof Error ? error.message : "Supabase storage failed";
+    }
   }
 
   return metrics;
 }
 
-function parseRpcUrls(value) {
+function parseRpcUrls(value, defaults = DEFAULT_RPC_URLS) {
   if (!value) {
-    return DEFAULT_RPC_URLS;
+    return defaults;
   }
 
   const urls = value
@@ -153,7 +207,7 @@ function parseRpcUrls(value) {
     .map((url) => url.trim())
     .filter(Boolean);
 
-  return urls.length ? urls : DEFAULT_RPC_URLS;
+  return urls.length ? urls : defaults;
 }
 
 function ethCall(id, to, data) {
@@ -199,6 +253,315 @@ async function rpcBatch(rpcUrls, calls) {
   }
 
   throw new Error(`All BSC RPC endpoints failed: ${lastError?.message || "unknown error"}`);
+}
+
+async function readTransferTrend(env, options) {
+  const startBlock = readPositiveInteger(env.CAMPAIGN_START_BLOCK, DEFAULT_CAMPAIGN_START_BLOCK);
+  const rangeSize = readPositiveInteger(env.LOG_BLOCK_RANGE, DEFAULT_LOG_BLOCK_RANGE);
+  const rangeBatchSize = readPositiveInteger(env.LOG_RANGE_BATCH_SIZE, DEFAULT_LOG_RANGE_BATCH_SIZE);
+  const pointLimit = readPositiveInteger(env.HISTORY_POINT_LIMIT, DEFAULT_HISTORY_POINT_LIMIT);
+  const cacheSeconds = readPositiveInteger(env.TREND_CACHE_SECONDS, DEFAULT_TREND_CACHE_SECONDS);
+  const refreshBlocks = readPositiveInteger(env.TREND_REFRESH_BLOCKS, DEFAULT_TREND_REFRESH_BLOCKS);
+  const cacheKey = [
+    options.campaignContract.toLowerCase(),
+    options.usdcContract.toLowerCase(),
+    startBlock,
+    rangeSize,
+    pointLimit
+  ].join(":");
+
+  if (
+    transferTrendCache?.key === cacheKey &&
+    Date.now() - transferTrendCache.cachedAt <= cacheSeconds * 1000 &&
+    transferTrendCache.toBlock >= options.currentBlock - refreshBlocks
+  ) {
+    return {
+      history: reconcileLatestPoint(
+        transferTrendCache.history,
+        options.currentBlock,
+        options.currentBalanceRaw,
+        options.decimals,
+        options.checkedAt,
+        pointLimit
+      ),
+      meta: {
+        ...transferTrendCache.meta,
+        cached: true,
+        toBlock: options.currentBlock
+      }
+    };
+  }
+
+  const logs = await readTransferLogs(options.rpcUrls, {
+    usdcContract: options.usdcContract,
+    campaignContract: options.campaignContract,
+    fromBlock: startBlock,
+    toBlock: options.currentBlock,
+    rangeSize,
+    rangeBatchSize
+  });
+  const rawPoints = buildBalancePointsFromLogs(logs, {
+    campaignContract: options.campaignContract,
+    startBlock,
+    currentBlock: options.currentBlock,
+    currentBalanceRaw: options.currentBalanceRaw
+  });
+  const sampledPoints = sampleTrendPoints(rawPoints, pointLimit);
+  const blockTimes = await readBlockTimestamps(
+    options.rpcUrls,
+    sampledPoints.map((point) => point.blockNumber)
+  );
+  const history = sampledPoints.map((point) => {
+    const checkedAt = blockTimes.get(point.blockNumber) || options.checkedAt;
+    return {
+      checkedAt,
+      blockNumber: point.blockNumber,
+      stakedUsdc: formatUnits(point.balanceRaw, options.decimals),
+      balanceRaw: point.balanceRaw.toString()
+    };
+  });
+  const reconstructedRaw = rawPoints.at(-1)?.balanceRaw ?? 0n;
+  const meta = {
+    source: "bsc_usdc_transfer_logs",
+    fromBlock: startBlock,
+    toBlock: options.currentBlock,
+    rawPoints: rawPoints.length,
+    returnedPoints: history.length,
+    pointLimit,
+    logCount: logs.length,
+    reconciled: reconstructedRaw !== options.currentBalanceRaw,
+    reconciliationDeltaRaw: (options.currentBalanceRaw - reconstructedRaw).toString(),
+    cached: false
+  };
+
+  transferTrendCache = {
+    key: cacheKey,
+    cachedAt: Date.now(),
+    toBlock: options.currentBlock,
+    history,
+    meta
+  };
+
+  return { history, meta };
+}
+
+async function readTransferLogs(rpcUrls, options) {
+  const paddedCampaign = `0x${padAddress(options.campaignContract)}`;
+  const logs = [];
+  const ranges = [];
+
+  for (let fromBlock = options.fromBlock; fromBlock <= options.toBlock; fromBlock += options.rangeSize) {
+    const toBlock = Math.min(fromBlock + options.rangeSize - 1, options.toBlock);
+    ranges.push({ fromBlock, toBlock });
+  }
+
+  for (let index = 0; index < ranges.length; index += options.rangeBatchSize) {
+    const chunk = ranges.slice(index, index + options.rangeBatchSize);
+    let requestId = 1;
+    const calls = [];
+    const ids = [];
+
+    for (const range of chunk) {
+      const common = {
+        address: options.usdcContract,
+        fromBlock: toHexBlock(range.fromBlock),
+        toBlock: toHexBlock(range.toBlock)
+      };
+      const incomingId = requestId;
+      const outgoingId = requestId + 1;
+      requestId += 2;
+      ids.push(incomingId, outgoingId);
+      calls.push(
+        buildLogCall(incomingId, common, [TRANSFER_TOPIC, null, paddedCampaign]),
+        buildLogCall(outgoingId, common, [TRANSFER_TOPIC, paddedCampaign])
+      );
+    }
+
+    const batch = await rpcBatch(rpcUrls, calls);
+
+    for (const id of ids) {
+      logs.push(...getRpcLogResult(batch, id));
+    }
+  }
+
+  return logs.sort(compareLogs);
+}
+
+function buildLogCall(id, common, topics) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "eth_getLogs",
+    params: [
+      {
+        ...common,
+        topics
+      }
+    ]
+  };
+}
+
+function buildBalancePointsFromLogs(logs, options) {
+  const paddedCampaign = `0x${padAddress(options.campaignContract)}`.toLowerCase();
+  const deltasByBlock = new Map([[options.startBlock, 0n]]);
+
+  for (const log of logs) {
+    const blockNumber = Number(BigInt(log.blockNumber));
+    const to = String(log.topics?.[2] || "").toLowerCase();
+    const from = String(log.topics?.[1] || "").toLowerCase();
+    const value = BigInt(log.data || "0x0");
+    const delta = to === paddedCampaign ? value : from === paddedCampaign ? -value : 0n;
+
+    if (delta === 0n) {
+      continue;
+    }
+
+    deltasByBlock.set(blockNumber, (deltasByBlock.get(blockNumber) || 0n) + delta);
+  }
+
+  const points = [];
+  let running = 0n;
+
+  for (const blockNumber of [...deltasByBlock.keys()].sort((a, b) => a - b)) {
+    running += deltasByBlock.get(blockNumber) || 0n;
+    points.push({
+      blockNumber,
+      balanceRaw: running
+    });
+  }
+
+  const last = points.at(-1);
+
+  if (!last || last.blockNumber < options.currentBlock) {
+    points.push({
+      blockNumber: options.currentBlock,
+      balanceRaw: options.currentBalanceRaw
+    });
+  } else if (last.blockNumber === options.currentBlock && last.balanceRaw !== options.currentBalanceRaw) {
+    last.balanceRaw = options.currentBalanceRaw;
+  }
+
+  return points;
+}
+
+function sampleTrendPoints(points, limit) {
+  if (points.length <= limit) {
+    return points;
+  }
+
+  const result = [points[0]];
+  const middleLimit = Math.max(limit - 2, 1);
+  const middleCount = points.length - 2;
+
+  for (let bucket = 0; bucket < middleLimit; bucket += 1) {
+    const end = 1 + Math.floor(((bucket + 1) * middleCount) / middleLimit);
+    const point = points[Math.max(1, end)];
+    const last = result.at(-1);
+
+    if (point && point.blockNumber !== last.blockNumber) {
+      result.push(point);
+    }
+  }
+
+  const tail = points.at(-1);
+
+  if (tail && result.at(-1)?.blockNumber !== tail.blockNumber) {
+    result.push(tail);
+  }
+
+  return result.slice(0, limit);
+}
+
+async function readBlockTimestamps(rpcUrls, blockNumbers) {
+  const uniqueBlocks = [...new Set(blockNumbers)];
+  const timestamps = new Map();
+  const chunkSize = 240;
+
+  for (let index = 0; index < uniqueBlocks.length; index += chunkSize) {
+    const chunk = uniqueBlocks.slice(index, index + chunkSize);
+    const batch = await rpcBatch(
+      rpcUrls,
+      chunk.map((blockNumber, offset) => ({
+        jsonrpc: "2.0",
+        id: offset + 1,
+        method: "eth_getBlockByNumber",
+        params: [toHexBlock(blockNumber), false]
+      }))
+    );
+
+    for (const entry of batch) {
+      if (entry.error) {
+        throw new Error(`Block timestamp lookup failed: ${entry.error.message || "unknown error"}`);
+      }
+
+      if (!entry.result?.timestamp) {
+        throw new Error("Block timestamp lookup returned an invalid block");
+      }
+
+      const blockNumber = chunk[entry.id - 1];
+      const seconds = Number(BigInt(entry.result.timestamp));
+      timestamps.set(blockNumber, new Date(seconds * 1000).toISOString());
+    }
+  }
+
+  return timestamps;
+}
+
+function reconcileLatestPoint(history, currentBlock, currentBalanceRaw, decimals, checkedAt, pointLimit) {
+  const next = [...history];
+  const currentPoint = {
+    checkedAt,
+    blockNumber: currentBlock,
+    stakedUsdc: formatUnits(currentBalanceRaw, decimals),
+    balanceRaw: currentBalanceRaw.toString()
+  };
+
+  if (!next.length || next.at(-1).blockNumber < currentBlock) {
+    next.push(currentPoint);
+  } else if (next.at(-1).blockNumber === currentBlock) {
+    next[next.length - 1] = currentPoint;
+  }
+
+  while (next.length > pointLimit && next.length > 2) {
+    next.splice(1, 1);
+  }
+
+  return next;
+}
+
+function getRpcLogResult(batch, id) {
+  const item = batch.find((entry) => entry.id === id);
+
+  if (!item) {
+    throw new Error(`Missing RPC log response for request ${id}`);
+  }
+
+  if (item.error) {
+    throw new Error(`RPC log request ${id} failed: ${item.error.message || "unknown error"}`);
+  }
+
+  if (!Array.isArray(item.result)) {
+    throw new Error(`RPC log request ${id} returned an invalid result`);
+  }
+
+  return item.result;
+}
+
+function compareLogs(left, right) {
+  return (
+    Number(BigInt(left.blockNumber)) - Number(BigInt(right.blockNumber)) ||
+    Number(BigInt(left.transactionIndex || "0x0")) - Number(BigInt(right.transactionIndex || "0x0")) ||
+    Number(BigInt(left.logIndex || "0x0")) - Number(BigInt(right.logIndex || "0x0"))
+  );
+}
+
+function toHexBlock(value) {
+  return `0x${Number(value).toString(16)}`;
+}
+
+function readPositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function getRpcResult(batch, id) {

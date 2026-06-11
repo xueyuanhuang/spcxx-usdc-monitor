@@ -19,6 +19,9 @@ create index if not exists spcxx_usdc_metrics_checked_at_desc
 
 alter table public.spcxx_usdc_metrics enable row level security;
 
+drop policy if exists "Allow public read access to SPCXx metrics"
+  on public.spcxx_usdc_metrics;
+
 create policy "Allow public read access to SPCXx metrics"
   on public.spcxx_usdc_metrics
   for select

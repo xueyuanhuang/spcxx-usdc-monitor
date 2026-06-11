@@ -105,7 +105,9 @@ function renderMetrics(data) {
     }
   }
 
-  elements.sampleCount.textContent = `${state.samples.length} 条记录`;
+  const sourceLabel =
+    data.historyMeta?.source === "bsc_usdc_transfer_logs" ? "从活动开始至今" : "当前余额";
+  elements.sampleCount.textContent = `${sourceLabel} · ${state.samples.length} 个趋势点`;
   drawChart();
 }
 
@@ -192,14 +194,17 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
   ctx.strokeStyle = "rgba(154, 168, 181, 0.28)";
   ctx.strokeRect(padding.left, padding.top, chartWidth, chartHeight);
   ctx.fillText("USDC", 12, 18);
-  ctx.fillText("现在", width - padding.right - 28, height - 12);
+  ctx.fillText("活动开始", padding.left, height - 12);
+  ctx.textAlign = "right";
+  ctx.fillText("现在", width - padding.right, height - 12);
+  ctx.textAlign = "left";
 }
 
 function drawEmpty(ctx, width, height) {
   ctx.fillStyle = "#9aa8b5";
   ctx.font = "14px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("等待下一条记录", width / 2, height / 2);
+  ctx.fillText("等待链上活动记录", width / 2, height / 2);
   ctx.textAlign = "left";
 }
 
