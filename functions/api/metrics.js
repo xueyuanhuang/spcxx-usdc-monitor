@@ -33,13 +33,6 @@ export async function onRequestGet(context) {
   const url = new URL(context.request.url);
   const persist = url.searchParams.get("persist") === "1";
   const reconstruct = url.searchParams.get("reconstruct") === "1";
-  const cache = caches.default;
-  const cacheKey = new Request(new URL(context.request.url).origin + "/api/metrics");
-  const cached = persist || reconstruct ? null : await cache.match(cacheKey);
-
-  if (cached) {
-    return withCors(cached);
-  }
 
   try {
     const metrics = await readMetrics(context.env, {
@@ -47,11 +40,8 @@ export async function onRequestGet(context) {
       reconstruct
     });
     const response = json(metrics, 200, {
-      "Cache-Control": persist ? "no-store" : "public, max-age=10, s-maxage=10"
+      "Cache-Control": "no-store"
     });
-    if (!persist && !reconstruct) {
-      context.waitUntil(cache.put(cacheKey, response.clone()));
-    }
     return response;
   } catch (error) {
     return json(
