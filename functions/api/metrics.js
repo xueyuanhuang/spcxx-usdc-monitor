@@ -156,17 +156,33 @@ async function readMetrics(env, options = {}) {
   const storedHistoryResult = isSupabaseConfigured(env)
     ? await safeReadSupabaseHistory(env)
     : { history: [], error: undefined };
-  const useStoredHistory =
-    storedHistoryResult.history.length > 0 && !options.reconstruct && !options.persist;
+  const useStoredHistory = storedHistoryResult.history.length > 0 && !options.reconstruct;
 
   if (useStoredHistory) {
-    const knownParticipantCount = getKnownParticipantCount(storedHistoryResult.history);
+    let knownParticipantCount = getKnownParticipantCount(storedHistoryResult.history);
+
+    if (options.persist) {
+      const incrementalParticipants = await safeReadIncrementalParticipants(env, {
+        campaignContract,
+        usdcContract,
+        currentBlock: blockNumber,
+        rpcUrls: logRpcUrls,
+        storedHistory: storedHistoryResult.history
+      });
+      knownParticipantCount += incrementalParticipants.newParticipantCount;
+      metrics.historyMeta.incremental = incrementalParticipants.meta;
+
+      if (incrementalParticipants.error) {
+        metrics.historyMeta.incrementalError = incrementalParticipants.error;
+      }
+    }
+
     currentPoint.participantCount = knownParticipantCount;
     metrics.metrics.participantAddresses = knownParticipantCount;
     metrics.history = mergeCurrentPoint(storedHistoryResult.history, currentPoint, metrics.historyMeta.pointLimit);
     metrics.historyMeta = {
       ...metrics.historyMeta,
-      source: "supabase_samples",
+      source: options.persist ? "supabase_samples_incremental" : "supabase_samples",
       returnedPoints: metrics.history.length,
       supabaseError: storedHistoryResult.error
     };
@@ -428,6 +444,73 @@ async function readTransferLogs(rpcUrls, options) {
   }
 
   return logs.sort(compareLogs);
+}
+
+async function safeReadIncrementalParticipants(env, options) {
+  try {
+    const meta = await readIncrementalParticipants(env, options);
+    return {
+      newParticipantCount: meta.newParticipantCount,
+      meta,
+      error: undefined
+    };
+  } catch (error) {
+    return {
+      newParticipantCount: 0,
+      meta: {
+        source: "incremental_transfer_logs",
+        fromBlock: options.storedHistory.at(-1)?.blockNumber,
+        toBlock: options.currentBlock,
+        logCount: 0,
+        newParticipantCount: 0
+      },
+      error: error instanceof Error ? error.message : "Incremental participant read failed"
+    };
+  }
+}
+
+async function readIncrementalParticipants(env, options) {
+  const lastStoredBlock = Number(options.storedHistory.at(-1)?.blockNumber || 0);
+  const fromBlock = Math.max(lastStoredBlock + 1, readPositiveInteger(env.CAMPAIGN_START_BLOCK, DEFAULT_CAMPAIGN_START_BLOCK));
+
+  if (!lastStoredBlock || fromBlock > options.currentBlock) {
+    return {
+      source: "incremental_transfer_logs",
+      fromBlock,
+      toBlock: options.currentBlock,
+      logCount: 0,
+      newParticipantCount: 0
+    };
+  }
+
+  const logs = await readTransferLogs(options.rpcUrls, {
+    usdcContract: options.usdcContract,
+    campaignContract: options.campaignContract,
+    fromBlock,
+    toBlock: options.currentBlock,
+    rangeSize: Math.min(readPositiveInteger(env.LOG_BLOCK_RANGE, DEFAULT_LOG_BLOCK_RANGE), 1000),
+    rangeBatchSize: readPositiveInteger(env.LOG_RANGE_BATCH_SIZE, DEFAULT_LOG_RANGE_BATCH_SIZE)
+  });
+  const paddedCampaign = `0x${padAddress(options.campaignContract)}`.toLowerCase();
+  const zeroTopic = `0x${"0".repeat(64)}`;
+  const participants = new Set();
+
+  for (const log of logs) {
+    const from = String(log.topics?.[1] || "").toLowerCase();
+    const to = String(log.topics?.[2] || "").toLowerCase();
+
+    if (to === paddedCampaign && from !== zeroTopic && from !== paddedCampaign) {
+      participants.add(from);
+    }
+  }
+
+  return {
+    source: "incremental_transfer_logs",
+    fromBlock,
+    toBlock: options.currentBlock,
+    logCount: logs.length,
+    newParticipantCount: participants.size
+  };
 }
 
 async function rpcBatchWithRequiredIds(rpcUrls, calls, requiredIds) {
@@ -822,11 +905,35 @@ function mergeCurrentPoint(history, currentPoint, limit) {
     participantCount
   });
 
-  while (next.length > limit && next.length > 2) {
-    next.shift();
+  return sampleHistoryPoints(next, limit);
+}
+
+function sampleHistoryPoints(points, limit) {
+  if (points.length <= limit) {
+    return points;
   }
 
-  return next;
+  const result = [points[0]];
+  const middleLimit = Math.max(limit - 2, 1);
+  const middleCount = points.length - 2;
+
+  for (let bucket = 0; bucket < middleLimit; bucket += 1) {
+    const end = 1 + Math.floor(((bucket + 1) * middleCount) / middleLimit);
+    const point = points[Math.max(1, end)];
+    const last = result.at(-1);
+
+    if (point && point.checkedAt !== last.checkedAt) {
+      result.push(point);
+    }
+  }
+
+  const tail = points.at(-1);
+
+  if (tail && result.at(-1)?.checkedAt !== tail.checkedAt) {
+    result.push(tail);
+  }
+
+  return result.slice(0, limit);
 }
 
 function supabaseHeaders(env, extra = {}) {
