@@ -172,19 +172,37 @@ async function readMetrics(env, options = {}) {
       ...trend.meta
     };
   } catch (error) {
-    metrics.history = [
-      {
-        checkedAt,
-        blockNumber,
-        stakedUsdc: balance,
-        balanceRaw: balanceRaw.toString(),
-        participantCount: 0
+    const fallbackPoint = {
+      checkedAt,
+      blockNumber,
+      stakedUsdc: balance,
+      balanceRaw: balanceRaw.toString(),
+      participantCount: 0
+    };
+    let fallbackHistory = [fallbackPoint];
+    let fallbackSource = "current_balance_fallback";
+    let fallbackError;
+
+    if (isSupabaseConfigured(env)) {
+      try {
+        const storedHistory = await readSupabaseHistory(env);
+        const knownParticipantCount = getKnownParticipantCount(storedHistory);
+        fallbackPoint.participantCount = knownParticipantCount;
+        fallbackHistory = mergeCurrentPoint(storedHistory, fallbackPoint, metrics.historyMeta.pointLimit);
+        metrics.metrics.participantAddresses = knownParticipantCount;
+        fallbackSource = "supabase_samples_fallback";
+      } catch (historyError) {
+        fallbackError = historyError instanceof Error ? historyError.message : "Supabase history read failed";
       }
-    ];
+    }
+
+    metrics.history = fallbackHistory;
     metrics.historyMeta = {
       ...metrics.historyMeta,
-      source: "current_balance_fallback",
-      error: error instanceof Error ? error.message : "Unknown transfer log error"
+      source: fallbackSource,
+      returnedPoints: metrics.history.length,
+      error: error instanceof Error ? error.message : "Unknown transfer log error",
+      fallbackError
     };
   }
 
@@ -382,7 +400,7 @@ async function readTransferLogs(rpcUrls, options) {
       );
     }
 
-    const batch = await rpcBatch(rpcUrls, calls);
+    const batch = await rpcBatchWithRequiredIds(rpcUrls, calls, ids);
 
     for (const id of ids) {
       logs.push(...getRpcLogResult(batch, id));
@@ -390,6 +408,34 @@ async function readTransferLogs(rpcUrls, options) {
   }
 
   return logs.sort(compareLogs);
+}
+
+async function rpcBatchWithRequiredIds(rpcUrls, calls, requiredIds) {
+  let lastError;
+
+  for (const rpcUrl of rpcUrls) {
+    try {
+      const batch = await rpcBatch([rpcUrl], calls);
+      const returnedIds = new Set(batch.map((entry) => entry.id));
+      const missingId = requiredIds.find((id) => !returnedIds.has(id));
+
+      if (missingId) {
+        throw new Error(`RPC ${rpcUrl} omitted response id ${missingId}`);
+      }
+
+      const failed = batch.find((entry) => requiredIds.includes(entry.id) && entry.error);
+
+      if (failed) {
+        throw new Error(`RPC ${rpcUrl} log request ${failed.id} failed: ${failed.error.message || "unknown error"}`);
+      }
+
+      return batch;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(`All BSC log RPC endpoints failed: ${lastError?.message || "unknown error"}`);
 }
 
 function buildLogCall(id, common, topics) {
@@ -703,6 +749,8 @@ async function readSupabaseHistory(env) {
   }
 
   const rows = await response.json();
+  let runningParticipantCount = 0;
+
   return rows
     .map((row) => ({
       checkedAt: row.checked_at,
@@ -711,7 +759,40 @@ async function readSupabaseHistory(env) {
       balanceRaw: row.balance_raw,
       participantCount: row.participant_count || 0
     }))
-    .reverse();
+    .reverse()
+    .map((row) => {
+      runningParticipantCount = Math.max(runningParticipantCount, Number(row.participantCount || 0));
+
+      return {
+        ...row,
+        participantCount: runningParticipantCount
+      };
+    });
+}
+
+function getKnownParticipantCount(history) {
+  return history.reduce((max, point) => Math.max(max, Number(point.participantCount || 0)), 0);
+}
+
+function mergeCurrentPoint(history, currentPoint, limit) {
+  const participantCount = Math.max(getKnownParticipantCount(history), Number(currentPoint.participantCount || 0));
+  const next = history
+    .filter((point) => Number(point.blockNumber) < Number(currentPoint.blockNumber))
+    .map((point) => ({
+      ...point,
+      participantCount: Math.max(Number(point.participantCount || 0), 0)
+    }));
+
+  next.push({
+    ...currentPoint,
+    participantCount
+  });
+
+  while (next.length > limit && next.length > 2) {
+    next.shift();
+  }
+
+  return next;
 }
 
 function supabaseHeaders(env, extra = {}) {

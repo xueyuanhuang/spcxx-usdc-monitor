@@ -10,6 +10,7 @@ Live monitor for the BSC USDC balance staked into the Binance Wallet SPCXx campa
 - Trend: reconstructs campaign-long USDC balance from BSC USDC `Transfer` logs where the campaign contract is either sender or receiver
 - Participant count: unique incoming `from` addresses in BSC USDC `Transfer` logs where the campaign contract is the receiver
 - Participant trend: reconstructs the running unique incoming address count from campaign start to the latest block
+- Fallback: if BSC log reconstruction fails, the API returns Supabase historical samples instead of collapsing the charts to one current point
 - Campaign intro post: <https://x.com/ai_yuanhuang/status/2064908389382263067?s=20>
 
 The monitor does not estimate allocation, refunds, or final SPCXx distribution. It only reads public on-chain state.

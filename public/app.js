@@ -132,8 +132,7 @@ function renderMetrics(data) {
     }
   }
 
-  const sourceLabel =
-    data.historyMeta?.source === "bsc_usdc_transfer_logs" ? "从活动开始至今" : "当前余额";
+  const sourceLabel = getHistorySourceLabel(data.historyMeta?.source);
   elements.sampleCount.textContent = `${sourceLabel} · ${state.balanceSamples.length} 个趋势点`;
   elements.participantSampleCount.textContent = `独立转入地址 · ${state.participantSamples.length} 个趋势点`;
   drawTrendChart("balance", elements.balanceCanvas, state.balanceSamples, {
@@ -160,6 +159,18 @@ function setAddressLink(element, address, path) {
 function setStatus(text, modifier) {
   elements.status.className = `status ${modifier}`.trim();
   elements.status.querySelector("span:last-child").textContent = text;
+}
+
+function getHistorySourceLabel(source) {
+  if (source === "bsc_usdc_transfer_logs") {
+    return "从活动开始至今";
+  }
+
+  if (source === "supabase_samples_fallback") {
+    return "Supabase 历史采样";
+  }
+
+  return "当前余额";
 }
 
 function drawTrendChart(chartKey, canvas, samples, options = {}) {
