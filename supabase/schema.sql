@@ -26,3 +26,7 @@ create policy "Allow public read access to SPCXx metrics"
   on public.spcxx_usdc_metrics
   for select
   using (true);
+
+grant select on public.spcxx_usdc_metrics to anon, authenticated, service_role;
+grant insert, update on public.spcxx_usdc_metrics to service_role;
+grant usage, select on sequence public.spcxx_usdc_metrics_id_seq to service_role;
