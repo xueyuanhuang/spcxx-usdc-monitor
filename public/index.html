@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Live monitor for BSC USDC staked into the Binance Wallet SPCXx campaign contract."
+    />
+    <title>SPCXx USDC Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Binance Wallet SPCXx Campaign</p>
+          <h1>BSC USDC Staking Monitor</h1>
+        </div>
+        <div class="status" id="status">
+          <span class="dot"></span>
+          <span>Loading</span>
+        </div>
+      </section>
+
+      <section class="metric-band" aria-label="Current staked USDC">
+        <div>
+          <p class="metric-label">Total USDC staked</p>
+          <div class="metric-value" id="staked-usdc">--</div>
+          <p class="metric-subtitle" id="staked-usd">Approximate USD value: --</p>
+        </div>
+        <button id="refresh-button" type="button">Refresh</button>
+      </section>
+
+      <section class="grid">
+        <article>
+          <span>Campaign contract</span>
+          <a id="campaign-link" target="_blank" rel="noreferrer"></a>
+        </article>
+        <article>
+          <span>USDC contract</span>
+          <a id="usdc-link" target="_blank" rel="noreferrer"></a>
+        </article>
+        <article>
+          <span>BSC block</span>
+          <strong id="block-number">--</strong>
+        </article>
+        <article>
+          <span>Last checked</span>
+          <strong id="checked-at">--</strong>
+        </article>
+      </section>
+
+      <section class="chart-wrap" aria-label="Recent readings">
+        <div class="chart-head">
+          <h2>Recent readings</h2>
+          <span id="sample-count">0 samples</span>
+        </div>
+        <canvas id="history-chart" width="960" height="280"></canvas>
+      </section>
+
+      <section class="details">
+        <div>
+          <h2>What this watches</h2>
+          <p>
+            The page reads the BSC USDC balance of the campaign contract. It does not estimate
+            allocation, refunds, or final distribution.
+          </p>
+        </div>
+        <dl>
+          <div>
+            <dt>Proxy implementation</dt>
+            <dd id="implementation">--</dd>
+          </div>
+          <div>
+            <dt>Paused</dt>
+            <dd id="paused">--</dd>
+          </div>
+          <div>
+            <dt>Data source</dt>
+            <dd>BNB Smart Chain RPC</dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "spcxx-usdc-monitor",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A Cloudflare Pages monitor for BSC USDC staked into the Binance Wallet SPCXx campaign contract.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build-check.mjs",
+    "dev": "wrangler pages dev public --compatibility-date=2026-06-11",
+    "deploy": "wrangler pages deploy public --project-name=spcxx-usdc-monitor"
+  },
+  "devDependencies": {
+    "wrangler": "^4.99.0"
+  }
+}
