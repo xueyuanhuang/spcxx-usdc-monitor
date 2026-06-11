@@ -166,7 +166,7 @@ function getHistorySourceLabel(source) {
     return "从活动开始至今";
   }
 
-  if (source === "supabase_samples_fallback") {
+  if (source === "supabase_samples" || source === "supabase_samples_fallback") {
     return "Supabase 历史采样";
   }
 

@@ -32,9 +32,10 @@ let transferTrendCache;
 export async function onRequestGet(context) {
   const url = new URL(context.request.url);
   const persist = url.searchParams.get("persist") === "1";
+  const reconstruct = url.searchParams.get("reconstruct") === "1";
   const cache = caches.default;
   const cacheKey = new Request(new URL(context.request.url).origin + "/api/metrics");
-  const cached = persist ? null : await cache.match(cacheKey);
+  const cached = persist || reconstruct ? null : await cache.match(cacheKey);
 
   if (cached) {
     return withCors(cached);
@@ -42,12 +43,13 @@ export async function onRequestGet(context) {
 
   try {
     const metrics = await readMetrics(context.env, {
-      persist
+      persist,
+      reconstruct
     });
     const response = json(metrics, 200, {
       "Cache-Control": persist ? "no-store" : "public, max-age=10, s-maxage=10"
     });
-    if (!persist) {
+    if (!persist && !reconstruct) {
       context.waitUntil(cache.put(cacheKey, response.clone()));
     }
     return response;
@@ -147,63 +149,50 @@ async function readMetrics(env, options = {}) {
     },
     history: [],
     historyMeta: {
-      source: "bsc_usdc_transfer_logs",
+      source: "supabase_samples",
       fromBlock: readPositiveInteger(env.CAMPAIGN_START_BLOCK, DEFAULT_CAMPAIGN_START_BLOCK),
       toBlock: blockNumber,
       pointLimit: readPositiveInteger(env.HISTORY_POINT_LIMIT, DEFAULT_HISTORY_POINT_LIMIT)
     },
     checkedAt
   };
+  const currentPoint = {
+    checkedAt,
+    blockNumber,
+    stakedUsdc: balance,
+    balanceRaw: balanceRaw.toString(),
+    participantCount: 0
+  };
+  const storedHistoryResult = isSupabaseConfigured(env)
+    ? await safeReadSupabaseHistory(env)
+    : { history: [], error: undefined };
+  const useStoredHistory =
+    storedHistoryResult.history.length > 0 && !options.reconstruct && !options.persist;
 
-  try {
-    const trend = await readTransferTrend(env, {
+  if (useStoredHistory) {
+    const knownParticipantCount = getKnownParticipantCount(storedHistoryResult.history);
+    currentPoint.participantCount = knownParticipantCount;
+    metrics.metrics.participantAddresses = knownParticipantCount;
+    metrics.history = mergeCurrentPoint(storedHistoryResult.history, currentPoint, metrics.historyMeta.pointLimit);
+    metrics.historyMeta = {
+      ...metrics.historyMeta,
+      source: "supabase_samples",
+      returnedPoints: metrics.history.length,
+      supabaseError: storedHistoryResult.error
+    };
+  } else {
+    await readTransferHistoryIntoMetrics(metrics, env, {
       campaignContract,
       usdcContract,
       decimals,
       currentBlock: blockNumber,
       currentBalanceRaw: balanceRaw,
       checkedAt,
-      rpcUrls: logRpcUrls
+      rpcUrls: logRpcUrls,
+      currentPoint,
+      storedHistory: storedHistoryResult.history,
+      storedHistoryError: storedHistoryResult.error
     });
-    metrics.history = trend.history;
-    metrics.metrics.participantAddresses = trend.meta.participantCount;
-    metrics.historyMeta = {
-      ...metrics.historyMeta,
-      ...trend.meta
-    };
-  } catch (error) {
-    const fallbackPoint = {
-      checkedAt,
-      blockNumber,
-      stakedUsdc: balance,
-      balanceRaw: balanceRaw.toString(),
-      participantCount: 0
-    };
-    let fallbackHistory = [fallbackPoint];
-    let fallbackSource = "current_balance_fallback";
-    let fallbackError;
-
-    if (isSupabaseConfigured(env)) {
-      try {
-        const storedHistory = await readSupabaseHistory(env);
-        const knownParticipantCount = getKnownParticipantCount(storedHistory);
-        fallbackPoint.participantCount = knownParticipantCount;
-        fallbackHistory = mergeCurrentPoint(storedHistory, fallbackPoint, metrics.historyMeta.pointLimit);
-        metrics.metrics.participantAddresses = knownParticipantCount;
-        fallbackSource = "supabase_samples_fallback";
-      } catch (historyError) {
-        fallbackError = historyError instanceof Error ? historyError.message : "Supabase history read failed";
-      }
-    }
-
-    metrics.history = fallbackHistory;
-    metrics.historyMeta = {
-      ...metrics.historyMeta,
-      source: fallbackSource,
-      returnedPoints: metrics.history.length,
-      error: error instanceof Error ? error.message : "Unknown transfer log error",
-      fallbackError
-    };
   }
 
   if (isSupabaseConfigured(env)) {
@@ -216,6 +205,47 @@ async function readMetrics(env, options = {}) {
   }
 
   return metrics;
+}
+
+async function readTransferHistoryIntoMetrics(metrics, env, options) {
+  try {
+    const trend = await readTransferTrend(env, {
+      campaignContract: options.campaignContract,
+      usdcContract: options.usdcContract,
+      decimals: options.decimals,
+      currentBlock: options.currentBlock,
+      currentBalanceRaw: options.currentBalanceRaw,
+      checkedAt: options.checkedAt,
+      rpcUrls: options.rpcUrls
+    });
+    metrics.history = trend.history;
+    metrics.metrics.participantAddresses = trend.meta.participantCount;
+    metrics.historyMeta = {
+      ...metrics.historyMeta,
+      ...trend.meta
+    };
+  } catch (error) {
+    const fallbackPoint = options.currentPoint;
+    let fallbackHistory = [options.currentPoint];
+    let fallbackSource = "current_balance_fallback";
+
+    if (options.storedHistory.length > 0) {
+      const knownParticipantCount = getKnownParticipantCount(options.storedHistory);
+      fallbackPoint.participantCount = knownParticipantCount;
+      fallbackHistory = mergeCurrentPoint(options.storedHistory, fallbackPoint, metrics.historyMeta.pointLimit);
+      metrics.metrics.participantAddresses = knownParticipantCount;
+      fallbackSource = "supabase_samples_fallback";
+    }
+
+    metrics.history = fallbackHistory;
+    metrics.historyMeta = {
+      ...metrics.historyMeta,
+      source: fallbackSource,
+      returnedPoints: metrics.history.length,
+      error: error instanceof Error ? error.message : "Unknown transfer log error",
+      fallbackError: options.storedHistoryError
+    };
+  }
 }
 
 function parseRpcUrls(value, defaults = DEFAULT_RPC_URLS) {
@@ -768,6 +798,20 @@ async function readSupabaseHistory(env) {
         participantCount: runningParticipantCount
       };
     });
+}
+
+async function safeReadSupabaseHistory(env) {
+  try {
+    return {
+      history: await readSupabaseHistory(env),
+      error: undefined
+    };
+  } catch (error) {
+    return {
+      history: [],
+      error: error instanceof Error ? error.message : "Supabase history read failed"
+    };
+  }
 }
 
 function getKnownParticipantCount(history) {
