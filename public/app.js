@@ -133,7 +133,7 @@ function drawChart() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, width, height);
 
-  const padding = { top: 24, right: 18, bottom: 34, left: 72 };
+  const padding = { top: 24, right: 18, bottom: 42, left: 72 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const values = state.samples.map((sample) => sample.value);
@@ -142,8 +142,9 @@ function drawChart() {
   const span = Math.max(max - min, Math.max(max * 0.002, 1));
   const lower = min - span * 0.15;
   const upper = max + span * 0.15;
+  const timeline = getTimeline(state.samples);
 
-  drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper);
+  drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline);
 
   if (state.samples.length < 2) {
     drawEmpty(ctx, width, height);
@@ -152,7 +153,7 @@ function drawChart() {
 
   ctx.beginPath();
   state.samples.forEach((sample, index) => {
-    const x = padding.left + (index / (state.samples.length - 1)) * chartWidth;
+    const x = getSampleX(sample, index, state.samples.length, timeline, padding, chartWidth);
     const y = padding.top + (1 - (sample.value - lower) / (upper - lower)) * chartHeight;
 
     if (index === 0) {
@@ -167,7 +168,7 @@ function drawChart() {
   ctx.stroke();
 
   const latest = state.samples[state.samples.length - 1];
-  const latestX = padding.left + chartWidth;
+  const latestX = getSampleX(latest, state.samples.length - 1, state.samples.length, timeline, padding, chartWidth);
   const latestY = padding.top + (1 - (latest.value - lower) / (upper - lower)) * chartHeight;
   ctx.fillStyle = "#f0b90b";
   ctx.beginPath();
@@ -175,7 +176,7 @@ function drawChart() {
   ctx.fill();
 }
 
-function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper) {
+function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline) {
   ctx.strokeStyle = "rgba(154, 168, 181, 0.16)";
   ctx.lineWidth = 1;
   ctx.fillStyle = "#9aa8b5";
@@ -191,13 +192,29 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
     ctx.fillText(formatAbbreviated(value), 12, y + 4);
   }
 
+  if (timeline) {
+    const tickCount = width < 560 ? 3 : width < 860 ? 4 : 5;
+
+    for (let step = 0; step < tickCount; step += 1) {
+      const ratio = tickCount === 1 ? 0 : step / (tickCount - 1);
+      const x = padding.left + ratio * chartWidth;
+      const tickTime = timeline.start + ratio * (timeline.end - timeline.start);
+
+      ctx.beginPath();
+      ctx.moveTo(x, padding.top);
+      ctx.lineTo(x, padding.top + chartHeight);
+      ctx.stroke();
+
+      ctx.textAlign = step === 0 ? "left" : step === tickCount - 1 ? "right" : "center";
+      ctx.fillText(formatAxisDate(tickTime), x, height - 12);
+    }
+
+    ctx.textAlign = "left";
+  }
+
   ctx.strokeStyle = "rgba(154, 168, 181, 0.28)";
   ctx.strokeRect(padding.left, padding.top, chartWidth, chartHeight);
   ctx.fillText("USDC", 12, 18);
-  ctx.fillText("活动开始", padding.left, height - 12);
-  ctx.textAlign = "right";
-  ctx.fillText("现在", width - padding.right, height - 12);
-  ctx.textAlign = "left";
 }
 
 function drawEmpty(ctx, width, height) {
@@ -252,6 +269,54 @@ function formatDate(value) {
     month: "short",
     day: "2-digit"
   }).format(new Date(value));
+}
+
+function formatAxisDate(value) {
+  const date = new Date(value);
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  })
+    .formatToParts(date)
+    .reduce((acc, part) => {
+      acc[part.type] = part.value;
+      return acc;
+    }, {});
+
+  return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function getTimeline(samples) {
+  const times = samples
+    .map((sample) => sample.time?.getTime())
+    .filter((time) => Number.isFinite(time));
+
+  if (times.length < 2) {
+    return null;
+  }
+
+  const start = Math.min(...times);
+  const end = Math.max(...times);
+
+  if (start === end) {
+    return null;
+  }
+
+  return { start, end };
+}
+
+function getSampleX(sample, index, count, timeline, padding, chartWidth) {
+  const time = sample.time?.getTime();
+
+  if (timeline && Number.isFinite(time)) {
+    const ratio = (time - timeline.start) / (timeline.end - timeline.start);
+    return padding.left + Math.max(0, Math.min(1, ratio)) * chartWidth;
+  }
+
+  return padding.left + (index / Math.max(count - 1, 1)) * chartWidth;
 }
 
 function shortAddress(address) {
