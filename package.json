@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "description": "A Cloudflare Pages monitor for BSC USDC staked into the Binance Wallet SPCXx campaign contract.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
