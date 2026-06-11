@@ -77,8 +77,8 @@ async function refreshMetrics(options = {}) {
 function renderMetrics(data) {
   const staked = Number(data.metrics.stakedUsdc);
 
-  elements.stakedUsdc.textContent = `${formatCompact(staked)} USDC`;
-  elements.stakedUsd.textContent = `约合美元：$${formatNumber(staked)}`;
+  elements.stakedUsdc.textContent = `${formatAbbreviated(staked)} USDC`;
+  elements.stakedUsd.textContent = `约合美元：$${formatAbbreviated(staked)}`;
   elements.blockNumber.textContent = formatInteger(data.chain.blockNumber);
   elements.checkedAt.textContent = formatDate(data.checkedAt);
   elements.implementation.textContent = data.campaign.implementation;
@@ -186,7 +186,7 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
     ctx.moveTo(padding.left, y);
     ctx.lineTo(width - padding.right, y);
     ctx.stroke();
-    ctx.fillText(formatCompact(value), 12, y + 4);
+    ctx.fillText(formatAbbreviated(value), 12, y + 4);
   }
 
   ctx.strokeStyle = "rgba(154, 168, 181, 0.28)";
@@ -215,11 +215,28 @@ function formatInteger(value) {
   }).format(value);
 }
 
-function formatCompact(value) {
-  return new Intl.NumberFormat("zh-CN", {
-    notation: "compact",
-    maximumFractionDigits: 2
-  }).format(value);
+function formatAbbreviated(value) {
+  const units = [
+    { threshold: 1_000_000_000, suffix: "B" },
+    { threshold: 1_000_000, suffix: "M" },
+    { threshold: 1_000, suffix: "K" }
+  ];
+  const abs = Math.abs(value);
+  const unit = units.find((item) => abs >= item.threshold);
+
+  if (!unit) {
+    return new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 2
+    }).format(value);
+  }
+
+  const scaled = value / unit.threshold;
+  const maximumFractionDigits = Math.abs(scaled) >= 100 ? 1 : 2;
+  const text = new Intl.NumberFormat("en-US", {
+    maximumFractionDigits
+  }).format(scaled);
+
+  return `${text}${unit.suffix}`;
 }
 
 function formatDate(value) {
