@@ -9,10 +9,14 @@ create table if not exists public.spcxx_usdc_metrics (
   implementation text,
   paused boolean not null default false,
   staked_usdc numeric not null,
+  participant_count integer not null default 0,
   balance_raw text not null,
   rpc_url text,
   created_at timestamptz not null default now()
 );
+
+alter table public.spcxx_usdc_metrics
+  add column if not exists participant_count integer not null default 0;
 
 create index if not exists spcxx_usdc_metrics_checked_at_desc
   on public.spcxx_usdc_metrics (checked_at desc);

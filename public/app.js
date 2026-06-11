@@ -1,5 +1,10 @@
 const state = {
-  samples: []
+  balanceSamples: [],
+  participantSamples: [],
+  charts: {
+    balance: { activeIndex: null },
+    participants: { activeIndex: null }
+  }
 };
 
 const elements = {
@@ -9,15 +14,24 @@ const elements = {
   campaignLink: document.querySelector("#campaign-link"),
   usdcLink: document.querySelector("#usdc-link"),
   blockNumber: document.querySelector("#block-number"),
+  participantCount: document.querySelector("#participant-count"),
   checkedAt: document.querySelector("#checked-at"),
   implementation: document.querySelector("#implementation"),
   paused: document.querySelector("#paused"),
   refreshButton: document.querySelector("#refresh-button"),
-  canvas: document.querySelector("#history-chart"),
-  sampleCount: document.querySelector("#sample-count")
+  balanceCanvas: document.querySelector("#history-chart"),
+  participantCanvas: document.querySelector("#participant-chart"),
+  sampleCount: document.querySelector("#sample-count"),
+  participantSampleCount: document.querySelector("#participant-sample-count")
 };
 
 elements.refreshButton.addEventListener("click", () => refreshMetrics({ manual: true }));
+setupChartInteraction("balance", elements.balanceCanvas);
+setupChartInteraction("participants", elements.participantCanvas);
+window.addEventListener("resize", () => {
+  redrawChart("balance");
+  redrawChart("participants");
+});
 
 const groupDialog = document.querySelector("#group-dialog");
 const openGroupButton = document.querySelector("#open-group");
@@ -76,10 +90,12 @@ async function refreshMetrics(options = {}) {
 
 function renderMetrics(data) {
   const staked = Number(data.metrics.stakedUsdc);
+  const participantCount = Number(data.metrics.participantAddresses || 0);
 
   elements.stakedUsdc.textContent = `${formatAbbreviated(staked)} USDC`;
   elements.stakedUsd.textContent = `约合美元：$${formatAbbreviated(staked)}`;
   elements.blockNumber.textContent = formatInteger(data.chain.blockNumber);
+  elements.participantCount.textContent = `${formatInteger(participantCount)} 个地址`;
   elements.checkedAt.textContent = formatDate(data.checkedAt);
   elements.implementation.textContent = data.campaign.implementation;
   elements.paused.textContent = data.campaign.paused ? "是" : "否";
@@ -88,27 +104,52 @@ function renderMetrics(data) {
   setAddressLink(elements.usdcLink, data.asset.contract, "token");
 
   if (Array.isArray(data.history) && data.history.length > 0) {
-    state.samples = data.history.map((sample) => ({
+    state.balanceSamples = data.history.map((sample) => ({
       value: Number(sample.stakedUsdc),
       time: new Date(sample.checkedAt),
       blockNumber: sample.blockNumber
     }));
+    state.participantSamples = data.history.map((sample) => ({
+      value: Number(sample.participantCount || 0),
+      time: new Date(sample.checkedAt),
+      blockNumber: sample.blockNumber
+    }));
   } else {
-    state.samples.push({
+    state.balanceSamples.push({
       value: staked,
       time: new Date(data.checkedAt),
       blockNumber: data.chain.blockNumber
     });
+    state.participantSamples.push({
+      value: participantCount,
+      time: new Date(data.checkedAt),
+      blockNumber: data.chain.blockNumber
+    });
 
-    if (state.samples.length > 80) {
-      state.samples.shift();
+    if (state.balanceSamples.length > 80) {
+      state.balanceSamples.shift();
+      state.participantSamples.shift();
     }
   }
 
   const sourceLabel =
     data.historyMeta?.source === "bsc_usdc_transfer_logs" ? "从活动开始至今" : "当前余额";
-  elements.sampleCount.textContent = `${sourceLabel} · ${state.samples.length} 个趋势点`;
-  drawChart();
+  elements.sampleCount.textContent = `${sourceLabel} · ${state.balanceSamples.length} 个趋势点`;
+  elements.participantSampleCount.textContent = `独立转入地址 · ${state.participantSamples.length} 个趋势点`;
+  drawTrendChart("balance", elements.balanceCanvas, state.balanceSamples, {
+    unitLabel: "USDC",
+    formatValue: formatAbbreviated,
+    formatTooltipValue: (value) => `${formatNumber(value)} USDC`,
+    tooltipLabel: "余额",
+    lineColor: "#46d4a3"
+  });
+  drawTrendChart("participants", elements.participantCanvas, state.participantSamples, {
+    unitLabel: "地址",
+    formatValue: formatCompactCount,
+    formatTooltipValue: (value) => `${formatInteger(value)} 个地址`,
+    tooltipLabel: "参与地址",
+    lineColor: "#89b4ff"
+  });
 }
 
 function setAddressLink(element, address, path) {
@@ -121,8 +162,12 @@ function setStatus(text, modifier) {
   elements.status.querySelector("span:last-child").textContent = text;
 }
 
-function drawChart() {
-  const canvas = elements.canvas;
+function drawTrendChart(chartKey, canvas, samples, options = {}) {
+  const chart = state.charts[chartKey];
+  chart.canvas = canvas;
+  chart.samples = samples;
+  chart.options = options;
+
   const ctx = canvas.getContext("2d");
   const ratio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
@@ -136,25 +181,41 @@ function drawChart() {
   const padding = { top: 24, right: 18, bottom: 42, left: 72 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const values = state.samples.map((sample) => sample.value);
+  const values = samples.map((sample) => sample.value).filter((value) => Number.isFinite(value));
+
+  if (!values.length) {
+    drawEmpty(ctx, width, height);
+    return;
+  }
+
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = Math.max(max - min, Math.max(max * 0.002, 1));
-  const lower = min - span * 0.15;
-  const upper = max + span * 0.15;
-  const timeline = getTimeline(state.samples);
+  const span = Math.max(max - min, Math.max(Math.abs(max) * 0.002, 1));
+  const lower = Math.max(0, min - span * 0.15);
+  const upper = Math.max(max + span * 0.15, lower + span);
+  const timeline = getTimeline(samples);
+  const layout = {
+    padding,
+    chartWidth,
+    chartHeight,
+    lower,
+    upper,
+    timeline,
+    width,
+    height
+  };
+  chart.layout = layout;
 
-  drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline);
+  drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline, options);
 
-  if (state.samples.length < 2) {
+  if (samples.length < 2) {
     drawEmpty(ctx, width, height);
     return;
   }
 
   ctx.beginPath();
-  state.samples.forEach((sample, index) => {
-    const x = getSampleX(sample, index, state.samples.length, timeline, padding, chartWidth);
-    const y = padding.top + (1 - (sample.value - lower) / (upper - lower)) * chartHeight;
+  samples.forEach((sample, index) => {
+    const { x, y } = getPointPosition(sample, index, samples.length, layout);
 
     if (index === 0) {
       ctx.moveTo(x, y);
@@ -164,23 +225,29 @@ function drawChart() {
   });
 
   ctx.lineWidth = 3;
-  ctx.strokeStyle = "#46d4a3";
+  ctx.strokeStyle = options.lineColor || "#46d4a3";
   ctx.stroke();
 
-  const latest = state.samples[state.samples.length - 1];
-  const latestX = getSampleX(latest, state.samples.length - 1, state.samples.length, timeline, padding, chartWidth);
-  const latestY = padding.top + (1 - (latest.value - lower) / (upper - lower)) * chartHeight;
+  const latest = samples[samples.length - 1];
+  const { x: latestX, y: latestY } = getPointPosition(latest, samples.length - 1, samples.length, layout);
   ctx.fillStyle = "#f0b90b";
   ctx.beginPath();
   ctx.arc(latestX, latestY, 5, 0, Math.PI * 2);
   ctx.fill();
+
+  if (Number.isInteger(chart.activeIndex) && samples[chart.activeIndex]) {
+    drawActivePoint(ctx, samples[chart.activeIndex], chart.activeIndex, samples, layout, options);
+  }
 }
 
-function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline) {
+function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, upper, timeline, options = {}) {
+  const formatValue = options.formatValue || formatAbbreviated;
+
   ctx.strokeStyle = "rgba(154, 168, 181, 0.16)";
   ctx.lineWidth = 1;
   ctx.fillStyle = "#9aa8b5";
   ctx.font = "12px Inter, system-ui, sans-serif";
+  ctx.textAlign = "left";
 
   for (let step = 0; step <= 4; step += 1) {
     const y = padding.top + (step / 4) * chartHeight;
@@ -189,7 +256,7 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
     ctx.moveTo(padding.left, y);
     ctx.lineTo(width - padding.right, y);
     ctx.stroke();
-    ctx.fillText(formatAbbreviated(value), 12, y + 4);
+    ctx.fillText(formatValue(value), 12, y + 4);
   }
 
   if (timeline) {
@@ -214,7 +281,7 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
 
   ctx.strokeStyle = "rgba(154, 168, 181, 0.28)";
   ctx.strokeRect(padding.left, padding.top, chartWidth, chartHeight);
-  ctx.fillText("USDC", 12, 18);
+  ctx.fillText(options.unitLabel || "", 12, 18);
 }
 
 function drawEmpty(ctx, width, height) {
@@ -223,6 +290,136 @@ function drawEmpty(ctx, width, height) {
   ctx.textAlign = "center";
   ctx.fillText("等待链上活动记录", width / 2, height / 2);
   ctx.textAlign = "left";
+}
+
+function setupChartInteraction(chartKey, canvas) {
+  const updateActivePoint = (event) => {
+    const chart = state.charts[chartKey];
+
+    if (!chart?.layout || !chart.samples?.length) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    chart.activeIndex = findNearestPointIndex(chart, x, y);
+    redrawChart(chartKey);
+  };
+
+  canvas.addEventListener("pointermove", updateActivePoint);
+  canvas.addEventListener("pointerdown", (event) => {
+    canvas.setPointerCapture?.(event.pointerId);
+    updateActivePoint(event);
+  });
+  canvas.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "mouse") {
+      state.charts[chartKey].activeIndex = null;
+      redrawChart(chartKey);
+    }
+  });
+}
+
+function redrawChart(chartKey) {
+  const chart = state.charts[chartKey];
+
+  if (!chart?.canvas || !chart.samples || !chart.options) {
+    return;
+  }
+
+  drawTrendChart(chartKey, chart.canvas, chart.samples, chart.options);
+}
+
+function findNearestPointIndex(chart, x, y) {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  const samples = chart.samples;
+
+  samples.forEach((sample, index) => {
+    const point = getPointPosition(sample, index, samples.length, chart.layout);
+    const distance = Math.abs(point.x - x) + Math.abs(point.y - y) * 0.18;
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  return nearestIndex;
+}
+
+function getPointPosition(sample, index, count, layout) {
+  const { padding, chartWidth, chartHeight, lower, upper, timeline } = layout;
+  const x = getSampleX(sample, index, count, timeline, padding, chartWidth);
+  const y = padding.top + (1 - (sample.value - lower) / (upper - lower)) * chartHeight;
+
+  return { x, y };
+}
+
+function drawActivePoint(ctx, sample, index, samples, layout, options) {
+  const point = getPointPosition(sample, index, samples.length, layout);
+  const valueText = options.formatTooltipValue
+    ? options.formatTooltipValue(sample.value)
+    : options.formatValue(sample.value);
+  const lines = [formatTooltipDate(sample.time), `${options.tooltipLabel || "数值"}：${valueText}`];
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(240, 185, 11, 0.5)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(point.x, layout.padding.top);
+  ctx.lineTo(point.x, layout.padding.top + layout.chartHeight);
+  ctx.stroke();
+
+  ctx.fillStyle = "#f0b90b";
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#0b0f14";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.font = "12px Inter, system-ui, sans-serif";
+  const boxWidth = Math.ceil(Math.max(...lines.map((line) => ctx.measureText(line).width)) + 26);
+  const boxHeight = 58;
+  const boxX =
+    point.x + boxWidth + 16 > layout.width
+      ? Math.max(8, point.x - boxWidth - 12)
+      : Math.min(layout.width - boxWidth - 8, point.x + 12);
+  const boxY =
+    point.y - boxHeight - 14 < 8
+      ? Math.min(layout.height - boxHeight - 8, point.y + 14)
+      : point.y - boxHeight - 14;
+
+  drawTooltipBox(ctx, boxX, boxY, boxWidth, boxHeight);
+  ctx.fillStyle = "#9aa8b5";
+  ctx.textAlign = "left";
+  ctx.fillText(lines[0], boxX + 13, boxY + 22);
+  ctx.fillStyle = "#f6f8fb";
+  ctx.font = "13px Inter, system-ui, sans-serif";
+  ctx.fillText(lines[1], boxX + 13, boxY + 43);
+  ctx.restore();
+}
+
+function drawTooltipBox(ctx, x, y, width, height) {
+  const radius = 8;
+
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(11, 15, 20, 0.95)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(154, 168, 181, 0.32)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
 function formatNumber(value) {
@@ -261,6 +458,14 @@ function formatAbbreviated(value) {
   return `${text}${unit.suffix}`;
 }
 
+function formatCompactCount(value) {
+  if (Math.abs(value) < 1_000) {
+    return formatInteger(value);
+  }
+
+  return formatAbbreviated(value);
+}
+
 function formatDate(value) {
   return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
@@ -287,6 +492,17 @@ function formatAxisDate(value) {
     }, {});
 
   return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function formatTooltipDate(value) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(value instanceof Date ? value : new Date(value));
 }
 
 function getTimeline(samples) {

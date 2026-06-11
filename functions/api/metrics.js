@@ -137,7 +137,8 @@ async function readMetrics(env, options = {}) {
     metrics: {
       balanceRaw: balanceRaw.toString(),
       stakedUsdc: balance,
-      stakedUsdApprox: balance
+      stakedUsdApprox: balance,
+      participantAddresses: 0
     },
     storage: {
       enabled: isSupabaseConfigured(env),
@@ -165,6 +166,7 @@ async function readMetrics(env, options = {}) {
       rpcUrls: logRpcUrls
     });
     metrics.history = trend.history;
+    metrics.metrics.participantAddresses = trend.meta.participantCount;
     metrics.historyMeta = {
       ...metrics.historyMeta,
       ...trend.meta
@@ -175,7 +177,8 @@ async function readMetrics(env, options = {}) {
         checkedAt,
         blockNumber,
         stakedUsdc: balance,
-        balanceRaw: balanceRaw.toString()
+        balanceRaw: balanceRaw.toString(),
+        participantCount: 0
       }
     ];
     metrics.historyMeta = {
@@ -300,7 +303,7 @@ async function readTransferTrend(env, options) {
     rangeSize,
     rangeBatchSize
   });
-  const rawPoints = buildBalancePointsFromLogs(logs, {
+  const rawPoints = buildTrendPointsFromLogs(logs, {
     campaignContract: options.campaignContract,
     startBlock,
     currentBlock: options.currentBlock,
@@ -317,7 +320,8 @@ async function readTransferTrend(env, options) {
       checkedAt,
       blockNumber: point.blockNumber,
       stakedUsdc: formatUnits(point.balanceRaw, options.decimals),
-      balanceRaw: point.balanceRaw.toString()
+      balanceRaw: point.balanceRaw.toString(),
+      participantCount: point.participantCount
     };
   });
   const reconstructedRaw = rawPoints.at(-1)?.balanceRaw ?? 0n;
@@ -329,6 +333,7 @@ async function readTransferTrend(env, options) {
     returnedPoints: history.length,
     pointLimit,
     logCount: logs.length,
+    participantCount: rawPoints.at(-1)?.participantCount || 0,
     reconciled: reconstructedRaw !== options.currentBalanceRaw,
     reconciliationDeltaRaw: (options.currentBalanceRaw - reconstructedRaw).toString(),
     cached: false
@@ -401,9 +406,11 @@ function buildLogCall(id, common, topics) {
   };
 }
 
-function buildBalancePointsFromLogs(logs, options) {
+function buildTrendPointsFromLogs(logs, options) {
   const paddedCampaign = `0x${padAddress(options.campaignContract)}`.toLowerCase();
+  const zeroTopic = `0x${"0".repeat(64)}`;
   const deltasByBlock = new Map([[options.startBlock, 0n]]);
+  const incomingParticipantsByBlock = new Map();
 
   for (const log of logs) {
     const blockNumber = Number(BigInt(log.blockNumber));
@@ -417,16 +424,31 @@ function buildBalancePointsFromLogs(logs, options) {
     }
 
     deltasByBlock.set(blockNumber, (deltasByBlock.get(blockNumber) || 0n) + delta);
+
+    if (to === paddedCampaign && from !== zeroTopic && from !== paddedCampaign) {
+      const addresses = incomingParticipantsByBlock.get(blockNumber) || new Set();
+      addresses.add(from);
+      incomingParticipantsByBlock.set(blockNumber, addresses);
+    }
   }
 
   const points = [];
   let running = 0n;
+  const participants = new Set();
 
-  for (const blockNumber of [...deltasByBlock.keys()].sort((a, b) => a - b)) {
+  const blockNumbers = new Set([...deltasByBlock.keys(), ...incomingParticipantsByBlock.keys()]);
+
+  for (const blockNumber of [...blockNumbers].sort((a, b) => a - b)) {
     running += deltasByBlock.get(blockNumber) || 0n;
+
+    for (const address of incomingParticipantsByBlock.get(blockNumber) || []) {
+      participants.add(address);
+    }
+
     points.push({
       blockNumber,
-      balanceRaw: running
+      balanceRaw: running,
+      participantCount: participants.size
     });
   }
 
@@ -435,7 +457,8 @@ function buildBalancePointsFromLogs(logs, options) {
   if (!last || last.blockNumber < options.currentBlock) {
     points.push({
       blockNumber: options.currentBlock,
-      balanceRaw: options.currentBalanceRaw
+      balanceRaw: options.currentBalanceRaw,
+      participantCount: last?.participantCount || 0
     });
   } else if (last.blockNumber === options.currentBlock && last.balanceRaw !== options.currentBalanceRaw) {
     last.balanceRaw = options.currentBalanceRaw;
@@ -513,7 +536,8 @@ function reconcileLatestPoint(history, currentBlock, currentBalanceRaw, decimals
     checkedAt,
     blockNumber: currentBlock,
     stakedUsdc: formatUnits(currentBalanceRaw, decimals),
-    balanceRaw: currentBalanceRaw.toString()
+    balanceRaw: currentBalanceRaw.toString(),
+    participantCount: next.at(-1)?.participantCount || 0
   };
 
   if (!next.length || next.at(-1).blockNumber < currentBlock) {
@@ -639,6 +663,7 @@ async function storeSupabaseMetric(env, metrics) {
     implementation: metrics.campaign.implementation,
     paused: metrics.campaign.paused,
     staked_usdc: metrics.metrics.stakedUsdc,
+    participant_count: metrics.metrics.participantAddresses,
     balance_raw: metrics.metrics.balanceRaw,
     rpc_url: metrics.chain.rpcUrl
   };
@@ -662,7 +687,7 @@ async function storeSupabaseMetric(env, metrics) {
 async function readSupabaseHistory(env) {
   const table = env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE;
   const params = new URLSearchParams({
-    select: "checked_at,block_number,staked_usdc,balance_raw",
+    select: "checked_at,block_number,staked_usdc,balance_raw,participant_count",
     order: "checked_at.desc",
     limit: env.HISTORY_LIMIT || "288"
   });
@@ -683,7 +708,8 @@ async function readSupabaseHistory(env) {
       checkedAt: row.checked_at,
       blockNumber: row.block_number,
       stakedUsdc: String(row.staked_usdc),
-      balanceRaw: row.balance_raw
+      balanceRaw: row.balance_raw,
+      participantCount: row.participant_count || 0
     }))
     .reverse();
 }

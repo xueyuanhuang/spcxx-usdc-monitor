@@ -72,6 +72,10 @@
           <strong id="block-number">--</strong>
         </article>
         <article>
+          <span>参与地址数</span>
+          <strong id="participant-count">--</strong>
+        </article>
+        <article>
           <span>最后读取</span>
           <strong id="checked-at">--</strong>
         </article>
@@ -85,12 +89,21 @@
         <canvas id="history-chart" width="960" height="280"></canvas>
       </section>
 
+      <section class="chart-wrap" aria-label="参与人数趋势">
+        <div class="chart-head">
+          <h2>参与人数趋势</h2>
+          <span id="participant-sample-count">独立转入地址 · 0 个趋势点</span>
+        </div>
+        <canvas id="participant-chart" width="960" height="280"></canvas>
+      </section>
+
       <section class="details">
         <div>
           <h2>监控口径</h2>
           <p>
             本页面读取活动合约在 BSC 上持有的 USDC 余额。这里不估算获配、
-            退款或最终分发结果，只展示链上公开余额。
+            退款或最终分发结果，只展示链上公开余额。参与地址数按向活动合约
+            转入 USDC 的唯一地址统计，不等同于币安账号数。
           </p>
         </div>
         <dl>
@@ -123,6 +136,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js?v=trend-axis-20260611" type="module"></script>
+    <script src="/app.js?v=participants-20260611" type="module"></script>
   </body>
 </html>
