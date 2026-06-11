@@ -1,115 +1,129 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Live monitor for BSC USDC staked into the Binance Wallet SPCXx campaign contract."
+      content="实时监控 Binance Wallet SPCXx 活动在 BSC 上的 USDC 质押量。"
     />
-    <title>SPCXx USDC Monitor</title>
+    <title>SPCXx USDC 质押监控</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="hero">
         <div>
-          <p class="eyebrow">Binance Wallet SPCXx Campaign</p>
-          <h1>BSC USDC Staking Monitor</h1>
+          <p class="eyebrow">Binance Wallet SPCXx 活动</p>
+          <h1>BSC USDC 质押监控</h1>
         </div>
         <div class="hero-actions">
           <a class="follow-link" href="https://twitter.com/intent/follow?screen_name=ai_yuanhuang" target="_blank" rel="noreferrer">
-            Follow @ai_yuanhuang
+            关注 @ai_yuanhuang
           </a>
           <div class="status" id="status">
             <span class="dot"></span>
-            <span>Loading</span>
+            <span>读取中</span>
           </div>
         </div>
       </section>
 
       <section class="campaign-note">
         <div>
-          <h2>Campaign context</h2>
+          <h2>活动介绍</h2>
           <p>
-            Binance Wallet opened an SPCXx subscription campaign for eligible users to apply
-            for a SpaceX-related tokenized security using USDC. The referenced subscription
-            price is 135 USDC, with a 5% underwriting fee and no guaranteed allocation.
+            Binance Wallet 开放了 SPCXx 申购活动，符合资格的用户可以用 USDC
+            申请认购 SpaceX 相关 tokenized security。参考申购价为 135 USDC，
+            承销费为 5%，不保证最终获配。
           </p>
           <p class="muted-line">
-            Entry path: Binance App > Wallet > Home (Discover) > SPCXx IPO Campaign.
+            参与入口：Binance App > Wallet > Home (Discover) > SPCXx IPO Campaign。
           </p>
         </div>
         <div class="note-actions">
           <a href="https://x.com/ai_yuanhuang/status/2064908389382263067?s=20" target="_blank" rel="noreferrer">
-            Read the intro post
+            查看活动帖
           </a>
           <a href="https://twitter.com/intent/follow?screen_name=ai_yuanhuang" target="_blank" rel="noreferrer">
-            Follow for updates
+            关注后续更新
           </a>
+          <button class="group-button" id="open-group" type="button">加入群聊</button>
         </div>
       </section>
 
-      <section class="metric-band" aria-label="Current staked USDC">
+      <section class="metric-band" aria-label="当前 USDC 质押量">
         <div>
-          <p class="metric-label">Total USDC staked</p>
+          <p class="metric-label">当前已质押 USDC</p>
           <div class="metric-value" id="staked-usdc">--</div>
-          <p class="metric-subtitle" id="staked-usd">Approximate USD value: --</p>
+          <p class="metric-subtitle" id="staked-usd">约合美元：--</p>
         </div>
-        <button id="refresh-button" type="button">Refresh</button>
+        <button id="refresh-button" type="button">刷新</button>
       </section>
 
       <section class="grid">
         <article>
-          <span>Campaign contract</span>
+          <span>活动合约</span>
           <a id="campaign-link" target="_blank" rel="noreferrer"></a>
         </article>
         <article>
-          <span>USDC contract</span>
+          <span>USDC 合约</span>
           <a id="usdc-link" target="_blank" rel="noreferrer"></a>
         </article>
         <article>
-          <span>BSC block</span>
+          <span>BSC 区块</span>
           <strong id="block-number">--</strong>
         </article>
         <article>
-          <span>Last checked</span>
+          <span>最后读取</span>
           <strong id="checked-at">--</strong>
         </article>
       </section>
 
-      <section class="chart-wrap" aria-label="Recent readings">
+      <section class="chart-wrap" aria-label="最近读数">
         <div class="chart-head">
-          <h2>Recent readings</h2>
-          <span id="sample-count">0 samples</span>
+          <h2>最近读数</h2>
+          <span id="sample-count">0 条记录</span>
         </div>
         <canvas id="history-chart" width="960" height="280"></canvas>
       </section>
 
       <section class="details">
         <div>
-          <h2>What this watches</h2>
+          <h2>监控口径</h2>
           <p>
-            The page reads the BSC USDC balance of the campaign contract. It does not estimate
-            allocation, refunds, or final distribution.
+            本页面读取活动合约在 BSC 上持有的 USDC 余额。这里不估算获配、
+            退款或最终分发结果，只展示链上公开余额。
           </p>
         </div>
         <dl>
           <div>
-            <dt>Proxy implementation</dt>
+            <dt>代理实现合约</dt>
             <dd id="implementation">--</dd>
           </div>
           <div>
-            <dt>Paused</dt>
+            <dt>是否暂停</dt>
             <dd id="paused">--</dd>
           </div>
           <div>
-            <dt>Data source</dt>
+            <dt>数据来源</dt>
             <dd>BNB Smart Chain RPC</dd>
           </div>
         </dl>
       </section>
     </main>
+
+    <dialog class="qr-dialog" id="group-dialog" aria-labelledby="group-dialog-title">
+      <div class="qr-panel">
+        <div class="qr-head">
+          <div>
+            <h2 id="group-dialog-title">加入群聊</h2>
+            <p>使用微信扫码加入，二维码有效期至 6 月 18 日。</p>
+          </div>
+          <button id="close-group" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+        <img src="/assets/wechat-group-qr.jpg" alt="bn alpha 刷分群微信群二维码" />
+      </div>
+    </dialog>
 
     <script src="/app.js" type="module"></script>
   </body>

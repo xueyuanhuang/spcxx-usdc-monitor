@@ -158,6 +158,15 @@ h2 {
   color: var(--text);
 }
 
+.group-button {
+  min-width: auto;
+  min-height: 36px;
+  padding: 8px 12px;
+  background: var(--accent-2);
+  color: #03140f;
+  font-size: 14px;
+}
+
 .metric-band {
   display: flex;
   align-items: center;
@@ -292,6 +301,58 @@ dl {
 
 dd {
   margin: 0;
+}
+
+.qr-dialog {
+  width: min(92vw, 520px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.qr-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.qr-panel {
+  padding: 18px;
+}
+
+.qr-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.qr-head p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.icon-button {
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.qr-panel img {
+  display: block;
+  width: 100%;
+  max-height: min(72vh, 720px);
+  object-fit: contain;
+  border-radius: 6px;
+  background: #111;
 }
 
 @media (max-width: 860px) {

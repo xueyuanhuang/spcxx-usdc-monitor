@@ -4,6 +4,7 @@ const requiredFiles = [
   "public/index.html",
   "public/app.js",
   "public/styles.css",
+  "public/assets/wechat-group-qr.jpg",
   "functions/api/metrics.js",
   "wrangler.toml"
 ];
@@ -17,6 +18,7 @@ const api = await readFile("functions/api/metrics.js", "utf8");
 const checks = [
   [html.includes("/app.js"), "index.html must load the browser app"],
   [html.includes("twitter.com/intent/follow"), "index.html must include the X follow intent"],
+  [html.includes("/assets/wechat-group-qr.jpg"), "index.html must include the WeChat group QR asset"],
   [app.includes("/api/metrics"), "app.js must load metrics from /api/metrics"],
   [app.includes("refreshMetrics"), "app.js must define the refresh loop"],
   [api.includes("BALANCE_OF_SELECTOR"), "metrics API must query ERC-20 balanceOf"],

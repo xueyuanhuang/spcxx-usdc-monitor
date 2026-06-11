@@ -19,11 +19,30 @@ const elements = {
 
 elements.refreshButton.addEventListener("click", () => refreshMetrics({ manual: true }));
 
+const groupDialog = document.querySelector("#group-dialog");
+const openGroupButton = document.querySelector("#open-group");
+const closeGroupButton = document.querySelector("#close-group");
+
+openGroupButton.addEventListener("click", () => {
+  if (typeof groupDialog.showModal === "function") {
+    groupDialog.showModal();
+  } else {
+    groupDialog.setAttribute("open", "");
+  }
+});
+
+closeGroupButton.addEventListener("click", closeGroupDialog);
+groupDialog.addEventListener("click", (event) => {
+  if (event.target === groupDialog) {
+    closeGroupDialog();
+  }
+});
+
 await refreshMetrics();
 setInterval(refreshMetrics, 30_000);
 
 async function refreshMetrics(options = {}) {
-  setStatus("Loading", "");
+  setStatus("读取中", "");
   elements.refreshButton.disabled = true;
 
   try {
@@ -33,19 +52,19 @@ async function refreshMetrics(options = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`API returned ${response.status}`);
+      throw new Error(`接口返回 ${response.status}`);
     }
 
     const data = await response.json();
 
     if (!data.ok) {
-      throw new Error(data.error || "Metrics API failed");
+      throw new Error(data.error || "数据读取失败");
     }
 
     renderMetrics(data);
-    setStatus("Live", "live");
+    setStatus("实时", "live");
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Failed", "error");
+    setStatus(error instanceof Error ? error.message : "失败", "error");
   } finally {
     elements.refreshButton.disabled = false;
 
@@ -59,11 +78,11 @@ function renderMetrics(data) {
   const staked = Number(data.metrics.stakedUsdc);
 
   elements.stakedUsdc.textContent = `${formatCompact(staked)} USDC`;
-  elements.stakedUsd.textContent = `Approximate USD value: $${formatNumber(staked)}`;
+  elements.stakedUsd.textContent = `约合美元：$${formatNumber(staked)}`;
   elements.blockNumber.textContent = formatInteger(data.chain.blockNumber);
   elements.checkedAt.textContent = formatDate(data.checkedAt);
   elements.implementation.textContent = data.campaign.implementation;
-  elements.paused.textContent = data.campaign.paused ? "Yes" : "No";
+  elements.paused.textContent = data.campaign.paused ? "是" : "否";
 
   setAddressLink(elements.campaignLink, data.campaign.contract, "address");
   setAddressLink(elements.usdcLink, data.asset.contract, "token");
@@ -86,7 +105,7 @@ function renderMetrics(data) {
     }
   }
 
-  elements.sampleCount.textContent = `${state.samples.length} sample${state.samples.length === 1 ? "" : "s"}`;
+  elements.sampleCount.textContent = `${state.samples.length} 条记录`;
   drawChart();
 }
 
@@ -173,38 +192,38 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
   ctx.strokeStyle = "rgba(154, 168, 181, 0.28)";
   ctx.strokeRect(padding.left, padding.top, chartWidth, chartHeight);
   ctx.fillText("USDC", 12, 18);
-  ctx.fillText("now", width - padding.right - 24, height - 12);
+  ctx.fillText("现在", width - padding.right - 28, height - 12);
 }
 
 function drawEmpty(ctx, width, height) {
   ctx.fillStyle = "#9aa8b5";
   ctx.font = "14px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("Waiting for another sample", width / 2, height / 2);
+  ctx.fillText("等待下一条记录", width / 2, height / 2);
   ctx.textAlign = "left";
 }
 
 function formatNumber(value) {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: 2
   }).format(value);
 }
 
 function formatInteger(value) {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: 0
   }).format(value);
 }
 
 function formatCompact(value) {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("zh-CN", {
     notation: "compact",
     maximumFractionDigits: 2
   }).format(value);
 }
 
 function formatDate(value) {
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -215,4 +234,12 @@ function formatDate(value) {
 
 function shortAddress(address) {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
+}
+
+function closeGroupDialog() {
+  if (typeof groupDialog.close === "function") {
+    groupDialog.close();
+  } else {
+    groupDialog.removeAttribute("open");
+  }
 }
