@@ -12,22 +12,29 @@ const SYMBOL_SELECTOR = "0x95d89b41";
 const NAME_SELECTOR = "0x06fdde03";
 const PAUSED_SELECTOR = "0x5c975abb";
 const EIP_1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+const DEFAULT_SUPABASE_TABLE = "spcxx_usdc_metrics";
 
 export async function onRequestGet(context) {
+  const url = new URL(context.request.url);
+  const persist = url.searchParams.get("persist") === "1";
   const cache = caches.default;
   const cacheKey = new Request(new URL(context.request.url).origin + "/api/metrics");
-  const cached = await cache.match(cacheKey);
+  const cached = persist ? null : await cache.match(cacheKey);
 
   if (cached) {
     return withCors(cached);
   }
 
   try {
-    const metrics = await readMetrics(context.env);
-    const response = json(metrics, 200, {
-      "Cache-Control": "public, max-age=10, s-maxage=10"
+    const metrics = await readMetrics(context.env, {
+      persist
     });
-    context.waitUntil(cache.put(cacheKey, response.clone()));
+    const response = json(metrics, 200, {
+      "Cache-Control": persist ? "no-store" : "public, max-age=10, s-maxage=10"
+    });
+    if (!persist) {
+      context.waitUntil(cache.put(cacheKey, response.clone()));
+    }
     return response;
   } catch (error) {
     return json(
@@ -49,7 +56,7 @@ export async function onRequestOptions() {
   });
 }
 
-async function readMetrics(env) {
+async function readMetrics(env, options = {}) {
   const campaignContract = env.CAMPAIGN_CONTRACT || CAMPAIGN_CONTRACT;
   const usdcContract = env.USDC_CONTRACT || USDC_CONTRACT;
   const rpcUrls = parseRpcUrls(env.BSC_RPC_URLS);
@@ -92,7 +99,8 @@ async function readMetrics(env) {
   const blockNumber = Number(BigInt(getRpcResult(result, 7)));
   const balance = formatUnits(balanceRaw, decimals);
 
-  return {
+  const checkedAt = new Date().toISOString();
+  const metrics = {
     ok: true,
     chain: {
       name: env.BSC_CHAIN_NAME || "BNB Smart Chain",
@@ -115,8 +123,24 @@ async function readMetrics(env) {
       stakedUsdc: balance,
       stakedUsdApprox: balance
     },
-    checkedAt: new Date().toISOString()
+    storage: {
+      enabled: isSupabaseConfigured(env),
+      table: env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE,
+      stored: false
+    },
+    history: [],
+    checkedAt
   };
+
+  if (isSupabaseConfigured(env)) {
+    const shouldPersist = options.persist || env.PERSIST_ON_READ === "true";
+    const stored = shouldPersist ? await storeSupabaseMetric(env, metrics) : false;
+    const history = await readSupabaseHistory(env);
+    metrics.storage.stored = stored;
+    metrics.history = history;
+  }
+
+  return metrics;
 }
 
 function parseRpcUrls(value) {
@@ -230,6 +254,88 @@ function formatUnits(value, decimals) {
   const fraction = abs % base;
   const fractionText = fraction.toString().padStart(decimals, "0").replace(/0+$/, "");
   return `${negative ? "-" : ""}${whole.toString()}${fractionText ? `.${fractionText}` : ""}`;
+}
+
+function isSupabaseConfigured(env) {
+  return Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
+async function storeSupabaseMetric(env, metrics) {
+  const table = env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE;
+  const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?on_conflict=sample_bucket`;
+  const checkedAt = new Date(metrics.checkedAt);
+  const sampleBucket = new Date(Math.floor(checkedAt.getTime() / 60000) * 60000).toISOString();
+
+  const body = {
+    sample_bucket: sampleBucket,
+    checked_at: metrics.checkedAt,
+    chain: metrics.chain.name,
+    block_number: metrics.chain.blockNumber,
+    campaign_contract: metrics.campaign.contract,
+    usdc_contract: metrics.asset.contract,
+    implementation: metrics.campaign.implementation,
+    paused: metrics.campaign.paused,
+    staked_usdc: metrics.metrics.stakedUsdc,
+    balance_raw: metrics.metrics.balanceRaw,
+    rpc_url: metrics.chain.rpcUrl
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: supabaseHeaders(env, {
+      Prefer: "resolution=merge-duplicates,return=minimal"
+    }),
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Supabase insert failed: ${response.status} ${detail}`);
+  }
+
+  return true;
+}
+
+async function readSupabaseHistory(env) {
+  const table = env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE;
+  const params = new URLSearchParams({
+    select: "checked_at,block_number,staked_usdc,balance_raw",
+    order: "checked_at.desc",
+    limit: env.HISTORY_LIMIT || "288"
+  });
+  const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?${params}`;
+
+  const response = await fetch(url, {
+    headers: supabaseHeaders(env)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Supabase history read failed: ${response.status} ${detail}`);
+  }
+
+  const rows = await response.json();
+  return rows
+    .map((row) => ({
+      checkedAt: row.checked_at,
+      blockNumber: row.block_number,
+      stakedUsdc: String(row.staked_usdc),
+      balanceRaw: row.balance_raw
+    }))
+    .reverse();
+}
+
+function supabaseHeaders(env, extra = {}) {
+  return {
+    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    "content-type": "application/json",
+    ...extra
+  };
+}
+
+function trimSlash(value) {
+  return String(value).replace(/\/+$/, "");
 }
 
 function json(data, status = 200, headers = {}) {

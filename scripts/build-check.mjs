@@ -16,9 +16,11 @@ const api = await readFile("functions/api/metrics.js", "utf8");
 
 const checks = [
   [html.includes("/app.js"), "index.html must load the browser app"],
+  [html.includes("twitter.com/intent/follow"), "index.html must include the X follow intent"],
   [app.includes("/api/metrics"), "app.js must load metrics from /api/metrics"],
   [app.includes("refreshMetrics"), "app.js must define the refresh loop"],
-  [api.includes("BALANCE_OF_SELECTOR"), "metrics API must query ERC-20 balanceOf"]
+  [api.includes("BALANCE_OF_SELECTOR"), "metrics API must query ERC-20 balanceOf"],
+  [api.includes("storeSupabaseMetric"), "metrics API must support Supabase persistence"]
 ];
 
 const failed = checks.filter(([ok]) => !ok).map(([, message]) => message);

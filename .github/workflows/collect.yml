@@ -1,0 +1,16 @@
+name: Collect SPCXx USDC Metrics
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Persist current metric
+        run: |
+          curl --fail --show-error --silent \
+            "https://spcxx-usdc-monitor.pages.dev/api/metrics?persist=1" \
+            | jq '{ok, checkedAt, storage, stakedUsdc: .metrics.stakedUsdc, block: .chain.blockNumber}'

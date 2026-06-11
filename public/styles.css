@@ -81,6 +81,30 @@ h2 {
   white-space: nowrap;
 }
 
+.hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.follow-link,
+.note-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--text);
+  color: #0b0f14;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
 .dot {
   width: 9px;
   height: 9px;
@@ -96,6 +120,42 @@ h2 {
 .status.error .dot {
   background: var(--danger);
   box-shadow: 0 0 0 5px rgba(255, 107, 107, 0.12);
+}
+
+.campaign-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 12px;
+  padding: 22px 28px;
+  border: 1px solid rgba(70, 212, 163, 0.24);
+  border-radius: 8px;
+  background: rgba(21, 27, 34, 0.78);
+}
+
+.campaign-note p {
+  margin-top: 10px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.muted-line {
+  font-size: 14px;
+}
+
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.note-actions a:first-child {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
 }
 
 .metric-band {
@@ -237,10 +297,16 @@ dd {
 @media (max-width: 860px) {
   .hero,
   .metric-band,
+  .campaign-note,
   .details {
     flex-direction: column;
     display: flex;
     align-items: stretch;
+  }
+
+  .hero-actions,
+  .note-actions {
+    justify-content: flex-start;
   }
 
   .grid,

@@ -68,13 +68,22 @@ function renderMetrics(data) {
   setAddressLink(elements.campaignLink, data.campaign.contract, "address");
   setAddressLink(elements.usdcLink, data.asset.contract, "token");
 
-  state.samples.push({
-    value: staked,
-    time: new Date(data.checkedAt)
-  });
+  if (Array.isArray(data.history) && data.history.length > 0) {
+    state.samples = data.history.map((sample) => ({
+      value: Number(sample.stakedUsdc),
+      time: new Date(sample.checkedAt),
+      blockNumber: sample.blockNumber
+    }));
+  } else {
+    state.samples.push({
+      value: staked,
+      time: new Date(data.checkedAt),
+      blockNumber: data.chain.blockNumber
+    });
 
-  if (state.samples.length > 80) {
-    state.samples.shift();
+    if (state.samples.length > 80) {
+      state.samples.shift();
+    }
   }
 
   elements.sampleCount.textContent = `${state.samples.length} sample${state.samples.length === 1 ? "" : "s"}`;
