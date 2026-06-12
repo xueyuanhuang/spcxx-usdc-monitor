@@ -98,7 +98,7 @@ function renderMetrics(data) {
   elements.participantCount.textContent = `${formatInteger(participantCount)} 个地址`;
   elements.checkedAt.textContent = formatDate(data.checkedAt);
   elements.implementation.textContent = data.campaign.implementation;
-  elements.paused.textContent = data.campaign.paused ? "是" : "否";
+  elements.paused.textContent = data.campaign.paused ? "已暂停" : "未暂停";
 
   setAddressLink(elements.campaignLink, data.campaign.contract, "address");
   setAddressLink(elements.usdcLink, data.asset.contract, "token");
