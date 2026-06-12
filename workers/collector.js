@@ -1,4 +1,5 @@
 const METRICS_URL = "https://spcxx-usdc-monitor.pages.dev/api/metrics?persist=1";
+const TOKEN_URL = "https://spcxx-usdc-monitor.pages.dev/api/token?persist=1";
 
 export default {
   async scheduled(_event, _env, ctx) {
@@ -17,24 +18,25 @@ export default {
 };
 
 async function collectMetric() {
-  const response = await fetch(METRICS_URL, {
-    headers: { accept: "application/json" },
-    cf: { cacheTtl: 0, cacheEverything: false }
-  });
+  const [metricsResult, tokenResult] = await Promise.all([
+    collectJson(METRICS_URL),
+    collectJson(TOKEN_URL)
+  ]);
 
-  const payload = await response.json();
-
-  if (!response.ok || !payload.ok || payload.storage?.stored !== true) {
+  if (!metricsResult.ok || !tokenResult.ok) {
     return Response.json(
       {
         ok: false,
-        status: response.status,
-        storage: payload.storage,
-        error: payload.error || payload.storage?.error || "Metric collection failed"
+        usdc: metricsResult,
+        token: tokenResult,
+        error: metricsResult.error || tokenResult.error || "Metric collection failed"
       },
       { status: 502 }
     );
   }
+
+  const payload = metricsResult.payload;
+  const tokenPayload = tokenResult.payload;
 
   return Response.json({
     ok: true,
@@ -42,6 +44,35 @@ async function collectMetric() {
     blockNumber: payload.chain.blockNumber,
     stakedUsdc: payload.metrics.stakedUsdc,
     participantAddresses: payload.metrics.participantAddresses,
-    source: payload.historyMeta?.source
+    tokenSupply: tokenPayload.metrics.totalSupply,
+    tokenHolders: tokenPayload.metrics.holderCount,
+    distributedSupply: tokenPayload.metrics.distributedSupply,
+    source: payload.historyMeta?.source,
+    tokenSource: tokenPayload.historyMeta?.source
   });
+}
+
+async function collectJson(url) {
+  const response = await fetch(url, {
+    headers: { accept: "application/json" },
+    cf: { cacheTtl: 0, cacheEverything: false }
+  });
+  const payload = await response.json();
+
+  if (!response.ok || !payload.ok || payload.storage?.stored !== true) {
+    return {
+      ok: false,
+      status: response.status,
+      storage: payload.storage,
+      payload,
+      error: payload.error || payload.storage?.error || `Collection failed for ${url}`
+    };
+  }
+
+  return {
+    ok: true,
+    status: response.status,
+    storage: payload.storage,
+    payload
+  };
 }

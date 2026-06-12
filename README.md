@@ -1,8 +1,17 @@
-# SPCXx USDC Monitor
+# SPCXx Token Monitor
 
-Live monitor for the BSC USDC balance staked into the Binance Wallet SPCXx campaign contract.
+Live monitor for the BNB Chain SPCXx tokenized stock contract, with the completed Binance Wallet USDC subscription phase kept as an archive.
 
 ## What It Tracks
+
+- SPCXx token contract: `0x68fa48b1c2fe52b3d776e1953e0e782b5044ce28`
+- Metric: `totalSupply()` on BNB Smart Chain
+- Holder count and top holders: BscScan holder table snapshot, persisted to Supabase
+- Backed inventory: balance held by known Backed/xStocks operational wallets
+- Distributed supply: `totalSupply - Backed/xStocks operational wallet balances`
+- Token trend: reads Supabase samples for normal page loads
+
+## Subscription Archive
 
 - Campaign contract: `0xE79feA13F06c919FEda975e418be66c10c8caE32`
 - BSC USDC contract: `0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d`
@@ -14,7 +23,7 @@ Live monitor for the BSC USDC balance staked into the Binance Wallet SPCXx campa
 - Fallback: if BSC log reconstruction fails during a persist/reconstruct request, the API returns Supabase historical samples instead of collapsing the charts to one current point
 - Campaign intro post: <https://x.com/ai_yuanhuang/status/2064908389382263067?s=20>
 
-The monitor does not estimate allocation, refunds, or final SPCXx distribution. It only reads public on-chain state.
+The monitor does not estimate Binance account allocation, refunds, or off-chain distribution. It only reads public on-chain state and BscScan holder snapshots.
 
 ## Run Locally
 
@@ -62,6 +71,7 @@ Set these in Cloudflare Pages if you want to override defaults:
 - `TREND_CACHE_SECONDS`: default `60`
 - `TREND_REFRESH_BLOCKS`: default `240`
 - `SUPABASE_TABLE`
+- `SUPABASE_TOKEN_TABLE`
 - `HISTORY_LIMIT`
 
 ## Supabase Storage
@@ -81,9 +91,10 @@ The API persists a row only when called with:
 
 ```text
 /api/metrics?persist=1
+/api/token?persist=1
 ```
 
-The included Cloudflare Worker collector calls that URL every minute, so Supabase keeps collecting samples even when nobody has the page open. `.github/workflows/collect.yml` remains as a backup collector.
+The included Cloudflare Worker collector calls both URLs every minute, so Supabase keeps collecting samples even when nobody has the page open. `.github/workflows/collect.yml` remains as a backup collector for the archived USDC metric.
 
 To backfill the full campaign history into Supabase, run:
 

@@ -1,35 +1,60 @@
 const state = {
-  balanceSamples: [],
+  tokenSupplySamples: [],
+  holderSamples: [],
+  distributedSamples: [],
+  usdcSamples: [],
   participantSamples: [],
   charts: {
-    balance: { activeIndex: null },
+    supply: { activeIndex: null },
+    holders: { activeIndex: null },
+    distributed: { activeIndex: null },
+    usdc: { activeIndex: null },
     participants: { activeIndex: null }
   }
 };
 
 const elements = {
   status: document.querySelector("#status"),
-  stakedUsdc: document.querySelector("#staked-usdc"),
-  stakedUsd: document.querySelector("#staked-usd"),
-  campaignLink: document.querySelector("#campaign-link"),
-  usdcLink: document.querySelector("#usdc-link"),
+  tokenSupply: document.querySelector("#token-supply"),
+  tokenSubtitle: document.querySelector("#token-subtitle"),
+  tokenLink: document.querySelector("#token-link"),
+  holderCount: document.querySelector("#holder-count"),
+  backedBalance: document.querySelector("#backed-balance"),
+  distributedSupply: document.querySelector("#distributed-supply"),
   blockNumber: document.querySelector("#block-number"),
-  participantCount: document.querySelector("#participant-count"),
+  holderSource: document.querySelector("#holder-source"),
   checkedAt: document.querySelector("#checked-at"),
   implementation: document.querySelector("#implementation"),
   paused: document.querySelector("#paused"),
   refreshButton: document.querySelector("#refresh-button"),
-  balanceCanvas: document.querySelector("#history-chart"),
+  supplyCanvas: document.querySelector("#supply-chart"),
+  holderCanvas: document.querySelector("#holder-chart"),
+  distributedCanvas: document.querySelector("#distributed-chart"),
+  supplySampleCount: document.querySelector("#supply-sample-count"),
+  holderSampleCount: document.querySelector("#holder-sample-count"),
+  distributedSampleCount: document.querySelector("#distributed-sample-count"),
+  archiveUpdated: document.querySelector("#archive-updated"),
+  stakedUsdc: document.querySelector("#staked-usdc"),
+  campaignLink: document.querySelector("#campaign-link"),
+  usdcLink: document.querySelector("#usdc-link"),
+  participantCount: document.querySelector("#participant-count"),
+  usdcCanvas: document.querySelector("#history-chart"),
   participantCanvas: document.querySelector("#participant-chart"),
   sampleCount: document.querySelector("#sample-count"),
   participantSampleCount: document.querySelector("#participant-sample-count")
 };
 
 elements.refreshButton.addEventListener("click", () => refreshMetrics({ manual: true }));
-setupChartInteraction("balance", elements.balanceCanvas);
+setupChartInteraction("supply", elements.supplyCanvas);
+setupChartInteraction("holders", elements.holderCanvas);
+setupChartInteraction("distributed", elements.distributedCanvas);
+setupChartInteraction("usdc", elements.usdcCanvas);
 setupChartInteraction("participants", elements.participantCanvas);
 window.addEventListener("resize", () => {
-  redrawChart("balance");
+  redrawChart("supply");
+  redrawChart("holders");
+  redrawChart("distributed");
+  redrawChart("usdc");
   redrawChart("participants");
 });
 
@@ -60,22 +85,13 @@ async function refreshMetrics(options = {}) {
   elements.refreshButton.disabled = true;
 
   try {
-    const response = await fetch("/api/metrics", {
-      headers: { accept: "application/json" },
-      cache: "no-store"
-    });
+    const [tokenData, archiveData] = await Promise.all([
+      fetchJson("/api/token"),
+      fetchJson("/api/metrics")
+    ]);
 
-    if (!response.ok) {
-      throw new Error(`接口返回 ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data.ok) {
-      throw new Error(data.error || "数据读取失败");
-    }
-
-    renderMetrics(data);
+    renderTokenMetrics(tokenData);
+    renderArchiveMetrics(archiveData);
     setStatus("实时", "live");
   } catch (error) {
     setStatus(error instanceof Error ? error.message : "失败", "error");
@@ -88,23 +104,105 @@ async function refreshMetrics(options = {}) {
   }
 }
 
-function renderMetrics(data) {
+async function fetchJson(path) {
+  const response = await fetch(path, {
+    headers: { accept: "application/json" },
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(`${path} 返回 ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.ok) {
+    throw new Error(data.error || `${path} 数据读取失败`);
+  }
+
+  return data;
+}
+
+function renderTokenMetrics(data) {
+  const supply = Number(data.metrics.totalSupply);
+  const holders = Number(data.metrics.holderCount || 0);
+  const backed = Number(data.metrics.backedBalance || 0);
+  const distributed = Number(data.metrics.distributedSupply || 0);
+
+  elements.tokenSupply.textContent = `${formatAbbreviated(supply)} ${data.token.symbol}`;
+  elements.tokenSubtitle.textContent = `Holder：${formatInteger(holders)} · 已分发：${formatTokenAmount(distributed)} ${data.token.symbol}`;
+  elements.holderCount.textContent = `${formatInteger(holders)} 个地址`;
+  elements.backedBalance.textContent = `${formatTokenAmount(backed)} ${data.token.symbol}`;
+  elements.distributedSupply.textContent = `${formatTokenAmount(distributed)} ${data.token.symbol}`;
+  elements.blockNumber.textContent = formatInteger(data.chain.blockNumber);
+  elements.holderSource.textContent = getHolderSourceLabel(data.holdersMeta?.source);
+  elements.checkedAt.textContent = formatDate(data.checkedAt);
+  elements.implementation.textContent = data.token.implementation;
+  elements.paused.textContent = data.permissions.paused ? "已暂停" : "未暂停";
+  setAddressLink(elements.tokenLink, data.token.contract, "token");
+
+  const history = Array.isArray(data.history) && data.history.length > 0 ? data.history : [{
+    checkedAt: data.checkedAt,
+    blockNumber: data.chain.blockNumber,
+    totalSupply: data.metrics.totalSupply,
+    holderCount: data.metrics.holderCount,
+    distributedSupply: data.metrics.distributedSupply
+  }];
+  state.tokenSupplySamples = history.map((sample) => ({
+    value: Number(sample.totalSupply),
+    time: new Date(sample.checkedAt),
+    blockNumber: sample.blockNumber
+  }));
+  state.holderSamples = history.map((sample) => ({
+    value: Number(sample.holderCount || 0),
+    time: new Date(sample.checkedAt),
+    blockNumber: sample.blockNumber
+  }));
+  state.distributedSamples = history.map((sample) => ({
+    value: Number(sample.distributedSupply || 0),
+    time: new Date(sample.checkedAt),
+    blockNumber: sample.blockNumber
+  }));
+
+  const tokenSourceLabel = getTokenHistorySourceLabel(data.historyMeta?.source);
+  elements.supplySampleCount.textContent = `${tokenSourceLabel} · ${state.tokenSupplySamples.length} 个趋势点`;
+  elements.holderSampleCount.textContent = `余额大于 0 地址 · ${state.holderSamples.length} 个趋势点`;
+  elements.distributedSampleCount.textContent = `已分发数量 · ${state.distributedSamples.length} 个趋势点`;
+  drawTrendChart("supply", elements.supplyCanvas, state.tokenSupplySamples, {
+    unitLabel: data.token.symbol,
+    formatValue: formatAbbreviated,
+    formatTooltipValue: (value) => `${formatTokenAmount(value)} ${data.token.symbol}`,
+    tooltipLabel: "发行量",
+    lineColor: "#f0b90b"
+  });
+  drawTrendChart("holders", elements.holderCanvas, state.holderSamples, {
+    unitLabel: "地址",
+    formatValue: formatCompactCount,
+    formatTooltipValue: (value) => `${formatInteger(value)} 个地址`,
+    tooltipLabel: "Holder",
+    lineColor: "#89b4ff"
+  });
+  drawTrendChart("distributed", elements.distributedCanvas, state.distributedSamples, {
+    unitLabel: data.token.symbol,
+    formatValue: formatAbbreviated,
+    formatTooltipValue: (value) => `${formatTokenAmount(value)} ${data.token.symbol}`,
+    tooltipLabel: "已分发",
+    lineColor: "#46d4a3"
+  });
+}
+
+function renderArchiveMetrics(data) {
   const staked = Number(data.metrics.stakedUsdc);
   const participantCount = Number(data.metrics.participantAddresses || 0);
 
   elements.stakedUsdc.textContent = `${formatAbbreviated(staked)} USDC`;
-  elements.stakedUsd.textContent = `约合美元：$${formatAbbreviated(staked)}`;
-  elements.blockNumber.textContent = formatInteger(data.chain.blockNumber);
   elements.participantCount.textContent = `${formatInteger(participantCount)} 个地址`;
-  elements.checkedAt.textContent = formatDate(data.checkedAt);
-  elements.implementation.textContent = data.campaign.implementation;
-  elements.paused.textContent = data.campaign.paused ? "已暂停" : "未暂停";
-
+  elements.archiveUpdated.textContent = `最后读取：${formatDate(data.checkedAt)}`;
   setAddressLink(elements.campaignLink, data.campaign.contract, "address");
   setAddressLink(elements.usdcLink, data.asset.contract, "token");
 
   if (Array.isArray(data.history) && data.history.length > 0) {
-    state.balanceSamples = data.history.map((sample) => ({
+    state.usdcSamples = data.history.map((sample) => ({
       value: Number(sample.stakedUsdc),
       time: new Date(sample.checkedAt),
       blockNumber: sample.blockNumber
@@ -115,27 +213,22 @@ function renderMetrics(data) {
       blockNumber: sample.blockNumber
     }));
   } else {
-    state.balanceSamples.push({
+    state.usdcSamples = [{
       value: staked,
       time: new Date(data.checkedAt),
       blockNumber: data.chain.blockNumber
-    });
-    state.participantSamples.push({
+    }];
+    state.participantSamples = [{
       value: participantCount,
       time: new Date(data.checkedAt),
       blockNumber: data.chain.blockNumber
-    });
-
-    if (state.balanceSamples.length > 80) {
-      state.balanceSamples.shift();
-      state.participantSamples.shift();
-    }
+    }];
   }
 
   const sourceLabel = getHistorySourceLabel(data.historyMeta?.source);
-  elements.sampleCount.textContent = `${sourceLabel} · ${state.balanceSamples.length} 个趋势点`;
+  elements.sampleCount.textContent = `${sourceLabel} · ${state.usdcSamples.length} 个趋势点`;
   elements.participantSampleCount.textContent = `独立转入地址 · ${state.participantSamples.length} 个趋势点`;
-  drawTrendChart("balance", elements.balanceCanvas, state.balanceSamples, {
+  drawTrendChart("usdc", elements.usdcCanvas, state.usdcSamples, {
     unitLabel: "USDC",
     formatValue: formatAbbreviated,
     formatTooltipValue: (value) => `${formatNumber(value)} USDC`,
@@ -146,7 +239,7 @@ function renderMetrics(data) {
     unitLabel: "地址",
     formatValue: formatCompactCount,
     formatTooltipValue: (value) => `${formatInteger(value)} 个地址`,
-    tooltipLabel: "参与地址",
+    tooltipLabel: "申购地址",
     lineColor: "#89b4ff"
   });
 }
@@ -161,12 +254,32 @@ function setStatus(text, modifier) {
   elements.status.querySelector("span:last-child").textContent = text;
 }
 
+function getHolderSourceLabel(source) {
+  if (source === "bscscan_holders") {
+    return "BscScan holder 表";
+  }
+
+  if (source === "supabase_latest") {
+    return "Supabase 最新样本";
+  }
+
+  return "链上/RPC";
+}
+
+function getTokenHistorySourceLabel(source) {
+  if (source === "supabase_token_samples") {
+    return "Supabase token 采样";
+  }
+
+  return "当前链上状态";
+}
+
 function getHistorySourceLabel(source) {
   if (source === "bsc_usdc_transfer_logs") {
     return "从活动开始至今";
   }
 
-  if (source === "supabase_samples" || source === "supabase_samples_fallback") {
+  if (source === "supabase_samples" || source === "supabase_samples_fallback" || source === "supabase_samples_incremental") {
     return "Supabase 历史采样";
   }
 
@@ -274,9 +387,9 @@ function drawGrid(ctx, width, height, padding, chartWidth, chartHeight, lower, u
     const tickCount = width < 560 ? 3 : width < 860 ? 4 : 5;
 
     for (let step = 0; step < tickCount; step += 1) {
-      const ratio = tickCount === 1 ? 0 : step / (tickCount - 1);
-      const x = padding.left + ratio * chartWidth;
-      const tickTime = timeline.start + ratio * (timeline.end - timeline.start);
+      const axisRatio = tickCount === 1 ? 0 : step / (tickCount - 1);
+      const x = padding.left + axisRatio * chartWidth;
+      const tickTime = timeline.start + axisRatio * (timeline.end - timeline.start);
 
       ctx.beginPath();
       ctx.moveTo(x, padding.top);
@@ -299,7 +412,7 @@ function drawEmpty(ctx, width, height) {
   ctx.fillStyle = "#9aa8b5";
   ctx.font = "14px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText("等待链上活动记录", width / 2, height / 2);
+  ctx.fillText("等待新的链上样本", width / 2, height / 2);
   ctx.textAlign = "left";
 }
 
@@ -442,6 +555,12 @@ function formatNumber(value) {
 function formatInteger(value) {
   return new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: 0
+  }).format(value);
+}
+
+function formatTokenAmount(value) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: Math.abs(value) >= 1000 ? 2 : 4
   }).format(value);
 }
 

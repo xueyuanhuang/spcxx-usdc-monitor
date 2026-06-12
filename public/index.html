@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="实时监控 Binance Wallet SPCXx 活动在 BSC 上的 USDC 质押量。"
+      content="实时追踪 BNB Chain 上 SPCXx 的发行数量、Holder 和分发状态。"
     />
-    <title>SPCXx USDC 质押监控</title>
+    <title>SPCXx 发行与 Holder 追踪</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -15,7 +15,7 @@
       <section class="hero">
         <div>
           <p class="eyebrow">Binance Wallet SPCXx 活动</p>
-          <h1>BSC USDC 质押监控</h1>
+          <h1>SPCXx 发行与 Holder 追踪</h1>
         </div>
         <div class="hero-actions">
           <a class="follow-link" href="https://twitter.com/intent/follow?screen_name=ai_yuanhuang" target="_blank" rel="noreferrer">
@@ -32,13 +32,12 @@
         <div>
           <h2>活动介绍</h2>
           <p>
-            Binance Wallet 开放了 SPCXx 申购活动，符合资格的用户可以用 USDC
-            申请认购 SpaceX 相关 tokenized security。参考申购价为 135 USDC，
-            承销费为 5%，不保证最终获配。
+            Binance Wallet SPCXx 申购阶段已经结束。现在重点转向 BNB Chain 上
+            SPCXx tokenized stock 的发行数量、Backed 库存和链上 Holder 分发变化。
           </p>
           <p class="muted-line">
-            参与入口：先将 Binance Wallet 语言切换为繁体中文，然后进入
-            Binance App > Wallet > Home (Discover)，即可看到 SPCXx IPO Campaign 活动页面。
+            监控合约为 xStocks / Backed 的 SpaceX xStock：SPCXx。旧的 USDC
+            申购数据保留在下方作为归档结果。
           </p>
         </div>
         <div class="note-actions">
@@ -49,31 +48,39 @@
         </div>
       </section>
 
-      <section class="metric-band" aria-label="当前 USDC 质押量">
+      <section class="metric-band" aria-label="SPCXx 已发行数量">
         <div>
-          <p class="metric-label">当前已质押 USDC</p>
-          <div class="metric-value" id="staked-usdc">--</div>
-          <p class="metric-subtitle" id="staked-usd">约合美元：--</p>
+          <p class="metric-label">SPCXx 已发行数量</p>
+          <div class="metric-value" id="token-supply">--</div>
+          <p class="metric-subtitle" id="token-subtitle">Holder：-- · 已分发：--</p>
         </div>
         <button id="refresh-button" type="button">刷新</button>
       </section>
 
       <section class="grid">
         <article>
-          <span>活动合约</span>
-          <a id="campaign-link" target="_blank" rel="noreferrer"></a>
+          <span>SPCXx 合约</span>
+          <a id="token-link" target="_blank" rel="noreferrer"></a>
         </article>
         <article>
-          <span>USDC 合约</span>
-          <a id="usdc-link" target="_blank" rel="noreferrer"></a>
+          <span>Holder 数</span>
+          <strong id="holder-count">--</strong>
+        </article>
+        <article>
+          <span>Backed 库存</span>
+          <strong id="backed-balance">--</strong>
+        </article>
+        <article>
+          <span>已分发数量</span>
+          <strong id="distributed-supply">--</strong>
         </article>
         <article>
           <span>BSC 区块</span>
           <strong id="block-number">--</strong>
         </article>
         <article>
-          <span>参与地址数</span>
-          <strong id="participant-count">--</strong>
+          <span>Holder 数据源</span>
+          <strong id="holder-source">--</strong>
         </article>
         <article>
           <span>最后读取</span>
@@ -81,34 +88,84 @@
         </article>
       </section>
 
-      <section class="chart-wrap" aria-label="活动趋势">
+      <section class="chart-wrap" aria-label="发行数量趋势">
         <div class="chart-head">
-          <h2>活动趋势</h2>
-          <span id="sample-count">从活动开始至今 · 0 个趋势点</span>
+          <h2>发行数量趋势</h2>
+          <span id="supply-sample-count">SPCXx totalSupply · 0 个趋势点</span>
         </div>
-        <canvas id="history-chart" width="960" height="280"></canvas>
+        <canvas id="supply-chart" width="960" height="280"></canvas>
       </section>
 
-      <section class="chart-wrap" aria-label="参与人数趋势">
+      <section class="chart-wrap" aria-label="Holder 趋势">
         <div class="chart-head">
-          <h2>参与人数趋势</h2>
-          <span id="participant-sample-count">独立转入地址 · 0 个趋势点</span>
+          <h2>Holder 趋势</h2>
+          <span id="holder-sample-count">余额大于 0 地址 · 0 个趋势点</span>
         </div>
-        <canvas id="participant-chart" width="960" height="280"></canvas>
+        <canvas id="holder-chart" width="960" height="280"></canvas>
+      </section>
+
+      <section class="chart-wrap" aria-label="分发数量趋势">
+        <div class="chart-head">
+          <h2>分发数量趋势</h2>
+          <span id="distributed-sample-count">totalSupply - Backed/官方钱包余额 · 0 个趋势点</span>
+        </div>
+        <canvas id="distributed-chart" width="960" height="280"></canvas>
+      </section>
+
+      <section class="archive" aria-label="USDC 申购归档">
+        <div class="archive-head">
+          <div>
+            <p class="eyebrow">申购归档</p>
+            <h2>USDC 申购阶段结果</h2>
+          </div>
+          <p id="archive-updated">最后读取：--</p>
+        </div>
+        <div class="archive-grid">
+          <article>
+            <span>最终 USDC 锁仓</span>
+            <strong id="staked-usdc">--</strong>
+          </article>
+          <article>
+            <span>申购地址数</span>
+            <strong id="participant-count">--</strong>
+          </article>
+          <article>
+            <span>活动合约</span>
+            <a id="campaign-link" target="_blank" rel="noreferrer"></a>
+          </article>
+          <article>
+            <span>USDC 合约</span>
+            <a id="usdc-link" target="_blank" rel="noreferrer"></a>
+          </article>
+        </div>
+        <section class="chart-wrap nested-chart" aria-label="USDC 申购趋势">
+          <div class="chart-head">
+            <h2>USDC 申购趋势</h2>
+            <span id="sample-count">Supabase 历史采样 · 0 个趋势点</span>
+          </div>
+          <canvas id="history-chart" width="960" height="260"></canvas>
+        </section>
+        <section class="chart-wrap nested-chart" aria-label="申购地址趋势">
+          <div class="chart-head">
+            <h2>申购地址趋势</h2>
+            <span id="participant-sample-count">独立转入地址 · 0 个趋势点</span>
+          </div>
+          <canvas id="participant-chart" width="960" height="260"></canvas>
+        </section>
       </section>
 
       <section class="details">
         <div>
           <h2>监控口径</h2>
           <p>
-            本页面读取活动合约在 BSC 上持有的 USDC 余额。这里不估算获配、
-            退款或最终分发结果，只展示链上公开余额。参与地址数按向活动合约
-            转入 USDC 的唯一地址统计，不等同于币安账号数。
+            本页面主监控读取 BNB Chain 上 SPCXx 合约的 totalSupply、Holder
+            数和 Backed/xStocks 官方钱包余额。已分发数量按 totalSupply 减去
+            Backed/官方运营钱包余额估算，不等同于最终获配账号数。
           </p>
         </div>
         <dl>
           <div>
-            <dt>代理实现合约</dt>
+            <dt>Token 实现合约</dt>
             <dd id="implementation">--</dd>
           </div>
           <div>
@@ -136,6 +193,6 @@
       </div>
     </dialog>
 
-    <script src="/app.js?v=paused-copy-20260612" type="module"></script>
+    <script src="/app.js?v=token-monitor-20260612" type="module"></script>
   </body>
 </html>

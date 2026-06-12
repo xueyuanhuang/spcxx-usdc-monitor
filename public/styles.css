@@ -225,7 +225,8 @@ button:disabled {
 
 article,
 .chart-wrap,
-.details {
+.details,
+.archive {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(21, 27, 34, 0.86);
@@ -287,10 +288,46 @@ canvas {
   padding: 22px;
 }
 
-.details p {
+.details p,
+.archive-head p {
   margin-top: 10px;
   color: var(--muted);
   line-height: 1.6;
+}
+
+.archive {
+  margin-top: 12px;
+  padding: 22px;
+}
+
+.archive-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.archive-head .eyebrow {
+  margin-bottom: 8px;
+}
+
+.archive-head p {
+  margin: 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.archive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.nested-chart {
+  margin-top: 12px;
+  padding: 18px;
+  background: rgba(30, 37, 45, 0.62);
 }
 
 dl {
@@ -360,15 +397,21 @@ dd {
   .hero,
   .metric-band,
   .campaign-note,
-  .details {
+  .details,
+  .archive-head {
     flex-direction: column;
     display: flex;
     align-items: stretch;
   }
 
   .hero-actions,
-  .note-actions {
+  .note-actions,
+  .archive-head {
     justify-content: flex-start;
+  }
+
+  .archive-head p {
+    white-space: normal;
   }
 
   .grid,
