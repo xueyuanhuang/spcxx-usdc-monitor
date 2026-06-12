@@ -13,16 +13,18 @@ const NAME_SELECTOR = "0x06fdde03";
 const PAUSED_SELECTOR = "0x5c975abb";
 const EIP_1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const DEFAULT_SUPABASE_TABLE = "spcxx_usdc_metrics";
+const DEFAULT_SUPABASE_PARTICIPANTS_TABLE = "spcxx_usdc_participants";
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const DEFAULT_LOG_RPC_URLS = [
+  "https://bsc-mainnet.public.blastapi.io",
   "https://bsc.publicnode.com",
   "https://bsc-rpc.publicnode.com",
   "https://bsc-dataseed1.binance.org",
   "https://bsc-dataseed.binance.org"
 ];
 const DEFAULT_CAMPAIGN_START_BLOCK = 103507500;
-const DEFAULT_LOG_BLOCK_RANGE = 10000;
-const DEFAULT_LOG_RANGE_BATCH_SIZE = 6;
+const DEFAULT_LOG_BLOCK_RANGE = 10;
+const DEFAULT_LOG_RANGE_BATCH_SIZE = 40;
 const DEFAULT_HISTORY_POINT_LIMIT = 220;
 const DEFAULT_TREND_CACHE_SECONDS = 60;
 const DEFAULT_TREND_REFRESH_BLOCKS = 240;
@@ -135,6 +137,7 @@ async function readMetrics(env, options = {}) {
     storage: {
       enabled: isSupabaseConfigured(env),
       table: env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE,
+      participantsTable: env.SUPABASE_PARTICIPANTS_TABLE || DEFAULT_SUPABASE_PARTICIPANTS_TABLE,
       stored: false
     },
     history: [],
@@ -156,20 +159,36 @@ async function readMetrics(env, options = {}) {
   const storedHistoryResult = isSupabaseConfigured(env)
     ? await safeReadSupabaseHistory(env)
     : { history: [], error: undefined };
+  const participantCountResult = isSupabaseConfigured(env)
+    ? await safeReadSupabaseParticipantCount(env)
+    : { count: undefined, error: undefined };
   const useStoredHistory = storedHistoryResult.history.length > 0 && !options.reconstruct;
 
   if (useStoredHistory) {
-    let knownParticipantCount = getKnownParticipantCount(storedHistoryResult.history);
+    const historyParticipantCount = getKnownParticipantCount(storedHistoryResult.history);
+    const participantTableReliable = isReliableParticipantTableCount(participantCountResult.count, historyParticipantCount);
+    let knownParticipantCount = pickReliableParticipantCount(participantCountResult.count, historyParticipantCount);
+    let responseHistory = participantTableReliable
+      ? capHistoryParticipantCount(storedHistoryResult.history, knownParticipantCount)
+      : storedHistoryResult.history;
 
     if (options.persist) {
       const incrementalParticipants = await safeReadIncrementalParticipants(env, {
         campaignContract,
         usdcContract,
         currentBlock: blockNumber,
+        checkedAt,
         rpcUrls: logRpcUrls,
         storedHistory: storedHistoryResult.history
       });
-      knownParticipantCount += incrementalParticipants.newParticipantCount;
+
+      knownParticipantCount = pickReliableParticipantCount(
+        incrementalParticipants.totalParticipantCount,
+        knownParticipantCount
+      );
+      responseHistory = isReliableParticipantTableCount(incrementalParticipants.totalParticipantCount, historyParticipantCount)
+        ? capHistoryParticipantCount(storedHistoryResult.history, knownParticipantCount)
+        : responseHistory;
       metrics.historyMeta.incremental = incrementalParticipants.meta;
 
       if (incrementalParticipants.error) {
@@ -179,11 +198,13 @@ async function readMetrics(env, options = {}) {
 
     currentPoint.participantCount = knownParticipantCount;
     metrics.metrics.participantAddresses = knownParticipantCount;
-    metrics.history = mergeCurrentPoint(storedHistoryResult.history, currentPoint, metrics.historyMeta.pointLimit);
+    metrics.history = mergeCurrentPoint(responseHistory, currentPoint, metrics.historyMeta.pointLimit);
     metrics.historyMeta = {
       ...metrics.historyMeta,
       source: options.persist ? "supabase_samples_incremental" : "supabase_samples",
       returnedPoints: metrics.history.length,
+      participantsSource: participantCountResult.count ? "supabase_participants" : "supabase_samples",
+      participantsError: participantCountResult.error,
       supabaseError: storedHistoryResult.error
     };
   } else {
@@ -451,18 +472,21 @@ async function safeReadIncrementalParticipants(env, options) {
     const meta = await readIncrementalParticipants(env, options);
     return {
       newParticipantCount: meta.newParticipantCount,
+      totalParticipantCount: meta.totalParticipantCount,
       meta,
       error: undefined
     };
   } catch (error) {
     return {
       newParticipantCount: 0,
+      totalParticipantCount: undefined,
       meta: {
         source: "incremental_transfer_logs",
         fromBlock: options.storedHistory.at(-1)?.blockNumber,
         toBlock: options.currentBlock,
         logCount: 0,
-        newParticipantCount: 0
+        newParticipantCount: 0,
+        totalParticipantCount: undefined
       },
       error: error instanceof Error ? error.message : "Incremental participant read failed"
     };
@@ -479,7 +503,8 @@ async function readIncrementalParticipants(env, options) {
       fromBlock,
       toBlock: options.currentBlock,
       logCount: 0,
-      newParticipantCount: 0
+      newParticipantCount: 0,
+      totalParticipantCount: await readSupabaseParticipantCount(env)
     };
   }
 
@@ -493,23 +518,39 @@ async function readIncrementalParticipants(env, options) {
   });
   const paddedCampaign = `0x${padAddress(options.campaignContract)}`.toLowerCase();
   const zeroTopic = `0x${"0".repeat(64)}`;
-  const participants = new Set();
+  const participants = new Map();
 
   for (const log of logs) {
     const from = String(log.topics?.[1] || "").toLowerCase();
     const to = String(log.topics?.[2] || "").toLowerCase();
 
     if (to === paddedCampaign && from !== zeroTopic && from !== paddedCampaign) {
-      participants.add(from);
+      const address = topicToAddress(from);
+      const blockNumber = Number(BigInt(log.blockNumber));
+      const existing = participants.get(address);
+
+      participants.set(address, {
+        address,
+        first_seen_at: options.checkedAt,
+        first_seen_block: existing ? Math.min(existing.first_seen_block, blockNumber) : blockNumber,
+        last_seen_at: options.checkedAt,
+        last_seen_block: existing ? Math.max(existing.last_seen_block, blockNumber) : blockNumber,
+        transfer_count: (existing?.transfer_count || 0) + 1,
+        total_in_raw: ((existing ? BigInt(existing.total_in_raw) : 0n) + BigInt(log.data || "0x0")).toString()
+      });
     }
   }
+
+  await upsertSupabaseParticipants(env, [...participants.values()]);
+  const totalParticipantCount = await readSupabaseParticipantCount(env);
 
   return {
     source: "incremental_transfer_logs",
     fromBlock,
     toBlock: options.currentBlock,
     logCount: logs.length,
-    newParticipantCount: participants.size
+    newParticipantCount: participants.size,
+    totalParticipantCount
   };
 }
 
@@ -835,23 +876,36 @@ async function storeSupabaseMetric(env, metrics) {
 
 async function readSupabaseHistory(env) {
   const table = env.SUPABASE_TABLE || DEFAULT_SUPABASE_TABLE;
-  const params = new URLSearchParams({
-    select: "checked_at,block_number,staked_usdc,balance_raw,participant_count",
-    order: "checked_at.desc",
-    limit: env.HISTORY_LIMIT || "288"
-  });
-  const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?${params}`;
+  const limit = readPositiveInteger(env.HISTORY_LIMIT, 288);
+  const pageSize = 1000;
+  const rows = [];
 
-  const response = await fetch(url, {
-    headers: supabaseHeaders(env)
-  });
+  for (let offset = 0; offset < limit; offset += pageSize) {
+    const params = new URLSearchParams({
+      select: "checked_at,block_number,staked_usdc,balance_raw,participant_count",
+      order: "checked_at.desc",
+      limit: String(Math.min(pageSize, limit - offset)),
+      offset: String(offset)
+    });
+    const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?${params}`;
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Supabase history read failed: ${response.status} ${detail}`);
+    const response = await fetch(url, {
+      headers: supabaseHeaders(env)
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Supabase history read failed: ${response.status} ${detail}`);
+    }
+
+    const pageRows = await response.json();
+    rows.push(...pageRows);
+
+    if (pageRows.length < pageSize) {
+      break;
+    }
   }
 
-  const rows = await response.json();
   let runningParticipantCount = 0;
 
   return rows
@@ -873,6 +927,68 @@ async function readSupabaseHistory(env) {
     });
 }
 
+async function readSupabaseParticipantCount(env) {
+  const table = env.SUPABASE_PARTICIPANTS_TABLE || DEFAULT_SUPABASE_PARTICIPANTS_TABLE;
+  const params = new URLSearchParams({
+    select: "address"
+  });
+  const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?${params}`;
+  const response = await fetch(url, {
+    method: "HEAD",
+    headers: supabaseHeaders(env, {
+      Prefer: "count=exact",
+      Range: "0-0"
+    })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Supabase participant count read failed: ${response.status} ${detail}`);
+  }
+
+  return readContentRangeCount(response.headers.get("content-range"));
+}
+
+async function safeReadSupabaseParticipantCount(env) {
+  try {
+    return {
+      count: await readSupabaseParticipantCount(env),
+      error: undefined
+    };
+  } catch (error) {
+    return {
+      count: undefined,
+      error: error instanceof Error ? error.message : "Supabase participant count read failed"
+    };
+  }
+}
+
+async function upsertSupabaseParticipants(env, rows) {
+  if (!rows.length) {
+    return;
+  }
+
+  const table = env.SUPABASE_PARTICIPANTS_TABLE || DEFAULT_SUPABASE_PARTICIPANTS_TABLE;
+  const url = `${trimSlash(env.SUPABASE_URL)}/rest/v1/${table}?on_conflict=address`;
+  const chunkSize = 500;
+
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const chunk = rows.slice(index, index + chunkSize);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: supabaseHeaders(env, {
+        Prefer: "resolution=ignore-duplicates,return=minimal"
+      }),
+      body: JSON.stringify(chunk)
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Supabase participant upsert failed: ${response.status} ${detail}`);
+    }
+  }
+}
+
 async function safeReadSupabaseHistory(env) {
   try {
     return {
@@ -889,6 +1005,47 @@ async function safeReadSupabaseHistory(env) {
 
 function getKnownParticipantCount(history) {
   return history.reduce((max, point) => Math.max(max, Number(point.participantCount || 0)), 0);
+}
+
+function pickReliableParticipantCount(participantTableCount, fallbackCount) {
+  const tableCount = Number(participantTableCount || 0);
+  const fallback = Number(fallbackCount || 0);
+
+  if (isReliableParticipantTableCount(tableCount, fallback)) {
+    return tableCount;
+  }
+
+  return fallback;
+}
+
+function isReliableParticipantTableCount(participantTableCount, fallbackCount) {
+  const tableCount = Number(participantTableCount || 0);
+  const fallback = Number(fallbackCount || 0);
+
+  return tableCount > 0 && (!fallback || tableCount >= fallback * 0.5);
+}
+
+function capHistoryParticipantCount(history, participantCount) {
+  const cap = Number(participantCount || 0);
+
+  if (!cap) {
+    return history;
+  }
+
+  return history.map((point) => ({
+    ...point,
+    participantCount: Math.min(Number(point.participantCount || 0), cap)
+  }));
+}
+
+function readContentRangeCount(value) {
+  const match = String(value || "").match(/\/(\d+)$/);
+
+  if (!match) {
+    throw new Error("Supabase count response did not include content-range");
+  }
+
+  return Number(match[1]);
 }
 
 function mergeCurrentPoint(history, currentPoint, limit) {
@@ -943,6 +1100,16 @@ function supabaseHeaders(env, extra = {}) {
     "content-type": "application/json",
     ...extra
   };
+}
+
+function topicToAddress(topic) {
+  const clean = String(topic).toLowerCase().replace(/^0x/, "");
+
+  if (clean.length < 40) {
+    throw new Error(`Invalid address topic: ${topic}`);
+  }
+
+  return `0x${clean.slice(-40)}`;
 }
 
 function trimSlash(value) {
